@@ -1,48 +1,19 @@
-from dataclasses import dataclass
-from typing import Tuple, Optional, NamedTuple, List
 import jax
 import jax.numpy as jnp
-from jax import vmap, random
+from jax import vmap
 import numpy as np
-import pygame
+from functools import partial
+from dataclasses import dataclass
 
 @dataclass(frozen=True)
-class ImageGrid:
-    """Represents a 2D coordinate grid for image rendering."""
-    height: int
-    width: int
-    coords: jnp.ndarray
+class ViewRect:
+    """Represents a viewport rectangle in world space."""
+    center: jnp.ndarray  # Center position [x, y]
+    size: jnp.ndarray    # Width and height
+    pixels: tuple[int, int]  # Output resolution (width, height)
 
-    @staticmethod
-    def create(image_size: Tuple[int, int] = (256, 256)) -> 'ImageGrid':
-        """Factory method to create an ImageGrid."""
-        height, width = image_size
-        y, x = jnp.meshgrid(
-            jnp.linspace(0, height-1, height),
-            jnp.linspace(0, width-1, width),
-            indexing='ij'
-        )
-        coords = jnp.stack([y, x], axis=-1)
-        return ImageGrid(height=height, width=width, coords=coords)
-
-class GaussianParams(NamedTuple):
-    """Parameters defining a set of 2D Gaussians."""
-    means: jnp.ndarray      # shape: (N, 2) for N Gaussians
-    stds: jnp.ndarray       # shape: (N,) or (N, 1)
-    amplitudes: jnp.ndarray # shape: (N,) or (N, 1)
-
-    @staticmethod
-    def create(
-        means: jnp.ndarray,
-        stds: jnp.ndarray,
-        amplitudes: Optional[jnp.ndarray] = None
-    ) -> 'GaussianParams':
-        """Factory method to create GaussianParams with optional amplitudes."""
-        if amplitudes is None:
-            amplitudes = jnp.ones_like(stds)
-        return GaussianParams(means, stds, amplitudes)
-
-def compute_single_gaussian(
+@jax.jit
+def compute_gaussian(
     coords: jnp.ndarray,
     mean: jnp.ndarray,
     std: float,
@@ -53,217 +24,43 @@ def compute_single_gaussian(
     exponent = -0.5 * jnp.sum(diff**2, axis=-1) / (std**2)
     return amplitude * jnp.exp(exponent)
 
-@jax.jit
-def _render_gaussians_impl(
-    coords: jnp.ndarray,
-    means: jnp.ndarray,
-    stds: jnp.ndarray,
-    amplitudes: jnp.ndarray
-) -> jnp.ndarray:
-    """Internal JIT-compiled implementation of gaussian rendering."""
-    vectorized_gaussian = vmap(
-        lambda m, s, a: compute_single_gaussian(coords, m, s, a)
-    )
-    gaussians = vectorized_gaussian(means, stds, amplitudes)
-    image = jnp.sum(gaussians, axis=0)
-    return jnp.clip(image, 0.0, 5.0) / 5.0
-
+@partial(jax.jit, static_argnums=(5, 6))
 def render_gaussians(
-    grid: ImageGrid,
-    params: GaussianParams
+    points: jnp.ndarray,      # World space points
+    intensities: jnp.ndarray,
+    stds: jnp.ndarray,
+    center: jnp.ndarray,      # View center
+    size: jnp.ndarray,        # View size
+    width: int,               # Output width
+    height: int               # Output height
 ) -> jnp.ndarray:
-    """Render multiple 2D Gaussians onto a grid."""
-    return _render_gaussians_impl(
-        grid.coords,
-        params.means,
-        params.stds,
-        params.amplitudes
+    """Render multiple 2D Gaussians into a viewport rectangle."""
+    # Create pixel coordinate grid
+    x, y = jnp.meshgrid(
+        jnp.linspace(-size[0]/2, size[0]/2, width),
+        jnp.linspace(-size[1]/2, size[1]/2, height),
+        indexing='xy'
     )
-
-@dataclass(frozen=True)
-class DisplayConfig:
-    """Configuration for the display window"""
-    width: int
-    height: int
-    std: float = 20.0
-    amplitude: float = 1.0
-    fps_cap: int = 60
-    font_size: int = 36
-
-@dataclass(frozen=True)
-class DisplayState:
-    """Current state of the display"""
-    screen: pygame.Surface
-    clock: pygame.time.Clock
-    font: pygame.font.Font
-    config: DisplayConfig
-    grid: ImageGrid
-
-    @staticmethod
-    def create(config: DisplayConfig) -> 'DisplayState':
-        """Initialize pygame and create initial display state"""
-        pygame.init()
-        screen = pygame.display.set_mode((config.width, config.height))
-        pygame.display.set_caption("Interactive Gaussian Renderer")
-        clock = pygame.time.Clock()
-        font = pygame.font.Font(None, config.font_size)
-        grid = ImageGrid.create((config.height, config.width))
-        return DisplayState(screen, clock, font, config, grid)
-
-@dataclass(frozen=True)
-class RenderState:
-    """Current state of the renderer"""
-    std: float
-    amplitude: float
-    mouse_pos: Tuple[int, int]
-    background_gaussians: GaussianParams  # Add background gaussians
-
-    @staticmethod
-    def create(
-        config: DisplayConfig,
-        key: jax.random.PRNGKey,
-        n_gaussians: int = 10000
-    ) -> 'RenderState':
-        """Create initial render state with random background gaussians"""
-        # Split PRNG key for different random operations
-        k1, k2, k3 = random.split(key, 3)
-        
-        # Generate random positions
-        means = random.uniform(
-            k1,
-            shape=(n_gaussians, 2),
-            minval=0,
-            maxval=jnp.array([config.width, config.height])
-        )
-        
-        # Small standard deviations
-        stds = random.uniform(
-            k2,
-            shape=(n_gaussians,),
-            minval=1.0,
-            maxval=3.0
-        )
-        
-        # Random amplitudes
-        amplitudes = random.uniform(
-            k3,
-            shape=(n_gaussians,),
-            minval=0.1,
-            maxval=0.3
-        )
-        
-        return RenderState(
-            std=config.std,
-            amplitude=config.amplitude,
-            mouse_pos=(0, 0),
-            background_gaussians=GaussianParams(means, stds, amplitudes)
-        )
-
-    def update(self, event: Optional[pygame.event.Event] = None) -> 'RenderState':
-        """Return new state based on event"""
-        new_std = self.std
-        new_amplitude = self.amplitude
-        
-        if event and event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_UP:
-                new_std = min(50, self.std + 1)
-            elif event.key == pygame.K_DOWN:
-                new_std = max(1, self.std - 1)
-            elif event.key == pygame.K_RIGHT:
-                new_amplitude = min(2.0, self.amplitude + 0.1)
-            elif event.key == pygame.K_LEFT:
-                new_amplitude = max(0.1, self.amplitude - 0.1)
-        
-        return RenderState(
-            std=new_std,
-            amplitude=new_amplitude,
-            mouse_pos=pygame.mouse.get_pos(),
-            background_gaussians=self.background_gaussians
-        )
-
-def update_display(
-    display_state: DisplayState,
-    image: jnp.ndarray
-) -> None:
-    """Update the display with the new image"""
-    # Convert JAX array to pygame surface
-    pygame_image = (image * 255).astype(np.uint8)
-    colormap = pygame.surfarray.make_surface(
-        np.stack([pygame_image] * 3, axis=-1)
+    # Transform to world space
+    x = x + center[0]
+    y = y + center[1]
+    # Stack coordinates in the same order as points [x, y]
+    coords = jnp.stack([x, y], axis=-1).transpose(1, 0, 2)  # Added transpose
+    
+    # Compute all gaussians using vmap
+    vectorized_gaussian = vmap(
+        lambda p, s, a: compute_gaussian(coords, p, s, a)
     )
+    gaussians = vectorized_gaussian(points, stds, intensities)
     
-    # Display the image
-    display_state.screen.blit(colormap, (0, 0))
-    
-    # Display FPS
-    fps = display_state.clock.get_fps()
-    fps_text = display_state.font.render(
-        f"FPS: {fps:.1f}", True, (255, 255, 255)
-    )
-    display_state.screen.blit(fps_text, (10, 10))
-    
-    pygame.display.flip()
+    # Sum all gaussians
+    image = jnp.sum(gaussians, axis=0)
+    return jnp.clip(image/2.0, 0.0, 1.0)
 
-def run_renderer(config: DisplayConfig):
-    """Main rendering loop"""
-    display_state = DisplayState.create(config)
-    
-    # Initialize with random seed
-    key = random.PRNGKey(0)
-    render_state = RenderState.create(config, key)
-    
-    running = True
-    while running:
-        # Handle events
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            render_state = render_state.update(event)
-        
-        # Update state based on current mouse position
-        render_state = render_state.update()
-        
-        # Create gaussian parameters for mouse cursor
-        x, y = render_state.mouse_pos
-        mouse_params = GaussianParams.create(
-            means=jnp.array([[x, y]]),
-            stds=jnp.array([render_state.std]),
-            amplitudes=jnp.array([render_state.amplitude])
-        )
-        
-        # Combine background and mouse gaussians
-        combined_params = GaussianParams(
-            means=jnp.concatenate([
-                render_state.background_gaussians.means,
-                mouse_params.means
-            ]),
-            stds=jnp.concatenate([
-                render_state.background_gaussians.stds,
-                mouse_params.stds
-            ]),
-            amplitudes=jnp.concatenate([
-                render_state.background_gaussians.amplitudes,
-                mouse_params.amplitudes
-            ])
-        )
-        
-        # Render combined gaussians
-        image = render_gaussians(display_state.grid, combined_params)
-        
-        # Update display
-        update_display(display_state, image)
-        
-        # Cap framerate
-        display_state.clock.tick(config.fps_cap)
-
-    pygame.quit()
-
-if __name__ == "__main__":
-    config = DisplayConfig(
-        width=1024,
-        height=1024,  # Larger window
-        std=5.0,     # Smaller std for mouse gaussian
-        amplitude=1.0,
-        fps_cap=60
-    )
-    run_renderer(config)
+def create_random_points(n_points: int = 2000, spread: float = 500.0):
+    """Create random gaussian points in world space."""
+    key = jax.random.PRNGKey(0)
+    points = jax.random.normal(key, shape=(n_points, 2)) * spread
+    intensities = jnp.ones(n_points) * 0.5
+    stds = jnp.ones(n_points) * 20.0
+    return points, intensities, stds

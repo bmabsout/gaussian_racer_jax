@@ -1,119 +1,158 @@
-from typing import NamedTuple
 import jax
 import jax.numpy as jnp
-from jax import random
+from jax import random, lax
 import numpy as np
 import pygame
-from functools import partial
 import matplotlib.cm as cm
+from functools import partial
 
-class GaussianParams(NamedTuple):
-    """Parameters for a collection of 2D Gaussians."""
-    positions: jnp.ndarray  # shape: (N, 2) for N Gaussians
-    amplitudes: jnp.ndarray # shape: (N,)
+# Pre-compute colormap
+COLORMAP = (cm.get_cmap('inferno')(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
 
-def create_gaussian_patch(patch_size: int = 21, std: float = 3.0) -> jnp.ndarray:
-    """Create a single Gaussian patch that we'll reuse."""
-    center = patch_size // 2
-    y, x = jnp.meshgrid(
-        jnp.arange(patch_size),
-        jnp.arange(patch_size),
-        indexing='ij'
+@jax.jit
+def single_blur_pass(image: jnp.ndarray) -> jnp.ndarray:
+    """Apply a single blur pass."""
+    kernel = jnp.array([0.25, 0.5, 0.25])
+    
+    # Horizontal blur
+    padded = jnp.pad(image, ((0, 0), (1, 1)), mode='edge')
+    temp = (
+        padded[:, :-2] * kernel[0] +
+        padded[:, 1:-1] * kernel[1] +
+        padded[:, 2:] * kernel[2]
     )
-    coords = jnp.stack([y - center, x - center], axis=-1)
-    r_squared = jnp.sum(coords**2, axis=-1)
-    return jnp.exp(-0.5 * r_squared / (std**2))
+    
+    # Vertical blur
+    padded = jnp.pad(temp, ((1, 1), (0, 0)), mode='edge')
+    result = (
+        padded[:-2, :] * kernel[0] +
+        padded[1:-1, :] * kernel[1] +
+        padded[2:, :] * kernel[2]
+    )
+    
+    return result
 
-def apply_colormap(image: np.ndarray) -> np.ndarray:
-    """Apply the inferno colormap to an image."""
-    colormap = cm.get_cmap('inferno')
-    colored = colormap(image)
-    return (colored[:, :, :3] * 255).astype(np.uint8)
+@jax.jit
+def fast_blur(image: jnp.ndarray, sigma: float = 1.0) -> jnp.ndarray:
+    """Fast approximate gaussian blur using simple box blur."""
+    def blur_body(i, acc):
+        return single_blur_pass(acc)
+    
+    # Convert sigma to number of passes (1-4)
+    n_passes = jnp.clip(jnp.floor(sigma), 1, 4).astype(jnp.int32)
+    
+    # Apply multiple blur passes
+    return lax.fori_loop(0, n_passes, blur_body, image)
 
 @partial(jax.jit, static_argnums=(3, 4))
-def render_gaussians(
-    positions: jnp.ndarray,
-    amplitudes: jnp.ndarray,
-    patch: jnp.ndarray,
+def splat_points(
+    points: jnp.ndarray,
+    intensities: jnp.ndarray,
+    stds: jnp.ndarray,
     width: int,
     height: int
 ) -> jnp.ndarray:
-    """Render all Gaussians by translating a pre-computed patch."""
-    # Create coordinate grid for the entire image
-    y, x = jnp.meshgrid(
-        jnp.arange(height),
-        jnp.arange(width),
-        indexing='ij'
-    )
-    coords = jnp.stack([y, x], axis=-1)
+    """Splat points onto a grid using nearest-neighbor."""
+    # Round points to nearest integer coordinates
+    indices = jnp.round(points).astype(jnp.int32)
     
-    # Reshape for broadcasting
-    coords = coords[None, :, :, :]
-    positions = positions[:, None, None, :]
-    amplitudes = amplitudes[:, None, None]
+    # Create empty image and accumulate intensities
+    image = jnp.zeros((width, height))
     
-    # Compute distances
-    diff = coords - positions
-    distances = jnp.sum(diff**2, axis=-1)
+    # Clamp indices to valid range
+    x_indices = jnp.clip(indices[:, 0], 0, width-1).astype(jnp.int32)
+    y_indices = jnp.clip(indices[:, 1], 0, height-1).astype(jnp.int32)
     
-    # Apply pre-computed patch values based on distances
-    patch_radius = patch.shape[0] // 2
-    patch_scale = (patch_radius ** 2) / 2
-    values = amplitudes * jnp.exp(-distances / patch_scale)
+    # Scale intensities based on std
+    scaled_intensities = intensities / jnp.sqrt(stds + 1.0)
     
-    # Sum all gaussians
-    image = jnp.sum(values, axis=0)
-    
-    # Normalize with a slight gamma correction for better visual contrast
-    image = jnp.clip(image, 0.0, 5.0)/5.0
-    return jnp.power(image, 0.8)  # Gamma correction
+    # Accumulate intensities at integer coordinates
+    return image.at[x_indices, y_indices].add(scaled_intensities)
 
-def run_visualization(width: int = 1024, height: int = 1024):
-    """Run interactive visualization."""
+def run_visualization(initial_width: int = 1024, initial_height: int = 768):
+    """Run visualization with minimal overhead."""
     pygame.init()
-    screen = pygame.display.set_mode((width, height))
+    
+    # Initialize resizable window
+    screen = pygame.display.set_mode((initial_width, initial_height), pygame.RESIZABLE)
+    pygame.display.set_caption("Gaussian Renderer")
     clock = pygame.time.Clock()
     
-    # Create pre-computed Gaussian patch
-    patch = create_gaussian_patch(patch_size=21, std=3.0)
-    
-    # Create random background gaussians
+    # Generate random points in world space
     key = random.PRNGKey(0)
     k1, k2 = random.split(key)
-    positions = random.uniform(
-        k1,
-        shape=(10000, 2),
-        minval=jnp.array([0, 0]),
-        maxval=jnp.array([height, width])
-    )
-    amplitudes = random.uniform(k2, shape=(10000,), minval=0.1, maxval=0.3)
+    n_points = 50000
+    
+    points = random.normal(k1, shape=(n_points, 2)) * 500
+    intensities = jnp.ones(n_points) * 0.5
+    stds = jnp.exp(random.normal(k2, shape=(n_points,))) * 1.0
+    
+    # Camera state
+    camera_pos = jnp.zeros(2)
+    zoom = 0.5
+    dragging = False
+    last_mouse_pos = None
+    
+    # Current window dimensions
+    width, height = initial_width, initial_height
+    surface = pygame.Surface((width, height))
     
     running = True
     while running:
         for event in pygame.event.get():
-            if event.type == pygame.QUIT:
+            if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
                 running = False
+            elif event.type == pygame.VIDEORESIZE:
+                width, height = event.size
+                screen = pygame.display.set_mode((width, height), pygame.RESIZABLE)
+                surface = pygame.Surface((width, height))
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:  # Left mouse button
+                    dragging = True
+                    last_mouse_pos = np.array(pygame.mouse.get_pos())
+                elif event.button == 4:  # Mouse wheel up
+                    zoom *= 1.1
+                elif event.button == 5:  # Mouse wheel down
+                    zoom /= 1.1
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 1:
+                    dragging = False
         
-        # Add mouse gaussian
+        # Handle camera movement
+        if dragging and last_mouse_pos is not None:
+            current_mouse_pos = np.array(pygame.mouse.get_pos())
+            delta = (current_mouse_pos - last_mouse_pos) / zoom
+            camera_pos = camera_pos + delta
+            last_mouse_pos = current_mouse_pos
+        
+        # Transform points to screen space
+        screen_center = jnp.array([width/2, height/2])
+        visible_points = (points + camera_pos) * zoom + screen_center
+        
+        # Add mouse point (in screen space)
         x, y = pygame.mouse.get_pos()
-        all_positions = jnp.concatenate([positions, jnp.array([[y, x]])])
-        all_amplitudes = jnp.concatenate([amplitudes, jnp.array([1.0])])
+        all_points = jnp.concatenate([visible_points, jnp.array([[x, y]])])
+        all_intensities = jnp.concatenate([intensities, jnp.array([1.0])])
+        all_stds = jnp.concatenate([stds * zoom, jnp.array([3.0 * zoom])])  # Fixed mouse std
         
         # Render
-        image = render_gaussians(all_positions, all_amplitudes, patch, width, height)
+        image = splat_points(all_points, all_intensities, all_stds, width, height)
+        image = fast_blur(image, 2.0)  # Fixed blur amount
         
-        # Convert to numpy and apply colormap
-        image_np = np.array(image)
-        colored_image = apply_colormap(image_np)
+        # Normalize and clip
+        image = jnp.clip(image * 2.0, 0.0, 1.0)
         
-        # Create pygame surface
-        surface = pygame.surfarray.make_surface(colored_image.transpose(1, 0, 2))
+        # Display
+        colored = COLORMAP[(image * 255).astype(np.uint8)]
+        surface = pygame.surfarray.make_surface(colored)
         screen.blit(surface, (0, 0))
         
-        # Show FPS
+        # Show FPS and controls
         font = pygame.font.Font(None, 36)
         fps_text = font.render(f"FPS: {clock.get_fps():.1f}", True, (255, 255, 255))
+        controls_text = font.render("Click and drag to move, Scroll to zoom", True, (255, 255, 255))
         screen.blit(fps_text, (10, 10))
+        screen.blit(controls_text, (10, 50))
         
         pygame.display.flip()
         clock.tick(60)
