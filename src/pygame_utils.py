@@ -109,9 +109,9 @@ def run_renderer(
     Args:
         window_config: Window configuration
         render_func: Function that takes:
-            - mouse_world_pos: np.ndarray[2] - Mouse position in world coordinates
-            - view_center: np.ndarray[2] - View center in world coordinates
-            - view_size: np.ndarray[2] - View size in world coordinates
+            - mouse_world_pos: np.ndarray[2] - Mouse position in world coordinates (x,y)
+            - view_center: np.ndarray[2] - View center in world coordinates (x,y)
+            - view_size: np.ndarray[2] - View size in world coordinates (width,height)
             - width: int - Output width in pixels
             - height: int - Output height in pixels
             Returns: np.ndarray[height, width, 3] - RGB image
@@ -122,11 +122,11 @@ def run_renderer(
     def render_frame(window: PygameWindow):
         width, height = window.size
         
-        # Convert mouse position to world coordinates
-        mouse_pos = np.array(pygame.mouse.get_pos())
-        mouse_world_pos = (mouse_pos - np.array([width/2, height/2])) / window.viewport.zoom + window.viewport.position
+        # Convert mouse position to world coordinates (x,y order)
+        mouse_screen = np.array(pygame.mouse.get_pos())  # pygame gives us (x,y)
+        mouse_world_pos = (mouse_screen - np.array([width/2, height/2])) / window.viewport.zoom + window.viewport.position
         
-        # Calculate view size in world coordinates
+        # Calculate view size in world coordinates (width, height order)
         view_size = np.array([width, height]) / window.viewport.zoom
         
         # Render

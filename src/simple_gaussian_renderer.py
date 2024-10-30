@@ -30,31 +30,30 @@ def render_view(
     all_intensities = jnp.concatenate([intensities, jnp.array([1.0])])
     all_stds = jnp.concatenate([stds, jnp.array([20.0])])
     
-    # Create pixel coordinate grid
-    x, y = jnp.meshgrid(
-        jnp.linspace(-view_size[0]/2, view_size[0]/2, width),
-        jnp.linspace(-view_size[1]/2, view_size[1]/2, height),
-        indexing='xy'
-    )
+    # Create coordinate grid (matching gaussian_renderer.py)
+    x = jnp.linspace(-view_size[0]/2, view_size[0]/2, width)
+    y = jnp.linspace(-view_size[1]/2, view_size[1]/2, height)
+    X, Y = jnp.meshgrid(x, y, indexing='ij')  # Changed to 'ij' to match
     
-    # Transform to world space
-    x = x + view_center[0]
-    y = y + view_center[1]
-    coords = jnp.stack([x, y], axis=-1).transpose(1, 0, 2)
+    # Pre-compute transformed coordinates
+    coords = jnp.stack([
+        X + view_center[0],
+        Y + view_center[1]
+    ], axis=-1)
     
-    # Compute all gaussians
-    def compute_gaussian(coords, mean, std, amplitude):
-        diff = coords - mean
-        exponent = -0.5 * jnp.sum(diff**2, axis=-1) / (std**2)
-        return amplitude * jnp.exp(exponent)
+    # Vectorized gaussian computation
+    def compute_gaussians(points, stds, intensities):
+        diff = coords[None, :, :, :] - points[:, None, None, :]
+        sq_distances = jnp.sum(diff**2, axis=-1)
+        gaussians = intensities[:, None, None] * jnp.exp(
+            -0.5 * sq_distances / (stds[:, None, None]**2)
+        )
+        return gaussians
     
-    vectorized_gaussian = vmap(
-        lambda p, s, a: compute_gaussian(coords, p, s, a)
-    )
-    gaussians = vectorized_gaussian(all_points, all_stds, all_intensities)
-    
-    # Sum and normalize
+    # Compute and sum all gaussians
+    gaussians = compute_gaussians(all_points, all_stds, all_intensities)
     image = jnp.sum(gaussians, axis=0)
+    
     return jnp.clip(image/2.0, 0.0, 1.0)
 
 if __name__ == "__main__":
