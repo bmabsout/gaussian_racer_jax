@@ -2,12 +2,9 @@ import jax
 import jax.numpy as jnp
 from jax import random, lax
 import numpy as np
-import pygame
-import matplotlib.cm as cm
 from functools import partial
-
-# Pre-compute colormap
-COLORMAP = (cm.get_cmap('inferno')(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
+from src.pygame_utils import WindowConfig, run_renderer
+from src.gaussian_utils import apply_colormap
 
 @jax.jit
 def single_blur_pass(image: jnp.ndarray) -> jnp.ndarray:
@@ -44,17 +41,26 @@ def fast_blur(image: jnp.ndarray, sigma: float = 1.0) -> jnp.ndarray:
     # Apply multiple blur passes
     return lax.fori_loop(0, n_passes, blur_body, image)
 
-@partial(jax.jit, static_argnums=(3, 4))
-def splat_points(
+@partial(jax.jit, static_argnums=(6, 7))
+def render_view(
     points: jnp.ndarray,
     intensities: jnp.ndarray,
     stds: jnp.ndarray,
+    mouse_world_pos: jnp.ndarray,
+    view_center: jnp.ndarray,
+    view_size: jnp.ndarray,
     width: int,
     height: int
 ) -> jnp.ndarray:
-    """Splat points onto a grid using nearest-neighbor."""
+    """Render gaussians for a given view and mouse position (all in world coordinates)."""
+    # Add mouse gaussian
+    all_points = jnp.concatenate([points, mouse_world_pos[None, :]])
+    all_intensities = jnp.concatenate([intensities, jnp.array([1.0])])
+    all_stds = jnp.concatenate([stds * view_size[0]/width, jnp.array([3.0 * view_size[0]/width])])
+    
     # Round points to nearest integer coordinates
-    indices = jnp.round(points).astype(jnp.int32)
+    screen_points = (all_points - view_center) * width / view_size[0] + jnp.array([width/2, height/2])
+    indices = jnp.round(screen_points).astype(jnp.int32)
     
     # Create empty image and accumulate intensities
     image = jnp.zeros((width, height))
@@ -64,100 +70,45 @@ def splat_points(
     y_indices = jnp.clip(indices[:, 1], 0, height-1).astype(jnp.int32)
     
     # Scale intensities based on std
-    scaled_intensities = intensities / jnp.sqrt(stds + 1.0)
+    scaled_intensities = all_intensities / jnp.sqrt(all_stds + 1.0)
     
     # Accumulate intensities at integer coordinates
-    return image.at[x_indices, y_indices].add(scaled_intensities)
+    image = image.at[x_indices, y_indices].add(scaled_intensities)
+    
+    # Apply blur and normalize
+    image = fast_blur(image, 2.0)
+    return jnp.clip(image * 2.0, 0.0, 1.0)
 
-def run_visualization(initial_width: int = 1024, initial_height: int = 768):
-    """Run visualization with minimal overhead."""
-    pygame.init()
-    
-    # Initialize resizable window
-    screen = pygame.display.set_mode((initial_width, initial_height), pygame.RESIZABLE)
-    pygame.display.set_caption("Gaussian Renderer")
-    clock = pygame.time.Clock()
-    
-    # Generate random points in world space
-    key = random.PRNGKey(0)
+def create_random_points(n_points: int = 50000, spread: float = 500.0):
+    """Create random gaussian points in world space."""
+    key = jax.random.PRNGKey(0)
     k1, k2 = random.split(key)
-    n_points = 50000
     
-    points = random.normal(k1, shape=(n_points, 2)) * 500
+    points = random.normal(k1, shape=(n_points, 2)) * spread
     intensities = jnp.ones(n_points) * 0.5
     stds = jnp.exp(random.normal(k2, shape=(n_points,))) * 1.0
     
-    # Camera state
-    camera_pos = jnp.zeros(2)
-    zoom = 0.5
-    dragging = False
-    last_mouse_pos = None
-    
-    # Current window dimensions
-    width, height = initial_width, initial_height
-    surface = pygame.Surface((width, height))
-    
-    running = True
-    while running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
-                running = False
-            elif event.type == pygame.VIDEORESIZE:
-                width, height = event.size
-                screen = pygame.display.set_mode((width, height), pygame.RESIZABLE)
-                surface = pygame.Surface((width, height))
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:  # Left mouse button
-                    dragging = True
-                    last_mouse_pos = np.array(pygame.mouse.get_pos())
-                elif event.button == 4:  # Mouse wheel up
-                    zoom *= 1.1
-                elif event.button == 5:  # Mouse wheel down
-                    zoom /= 1.1
-            elif event.type == pygame.MOUSEBUTTONUP:
-                if event.button == 1:
-                    dragging = False
-        
-        # Handle camera movement
-        if dragging and last_mouse_pos is not None:
-            current_mouse_pos = np.array(pygame.mouse.get_pos())
-            delta = (current_mouse_pos - last_mouse_pos) / zoom
-            camera_pos = camera_pos + delta
-            last_mouse_pos = current_mouse_pos
-        
-        # Transform points to screen space
-        screen_center = jnp.array([width/2, height/2])
-        visible_points = (points + camera_pos) * zoom + screen_center
-        
-        # Add mouse point (in screen space)
-        x, y = pygame.mouse.get_pos()
-        all_points = jnp.concatenate([visible_points, jnp.array([[x, y]])])
-        all_intensities = jnp.concatenate([intensities, jnp.array([1.0])])
-        all_stds = jnp.concatenate([stds * zoom, jnp.array([3.0 * zoom])])  # Fixed mouse std
-        
-        # Render
-        image = splat_points(all_points, all_intensities, all_stds, width, height)
-        image = fast_blur(image, 2.0)  # Fixed blur amount
-        
-        # Normalize and clip
-        image = jnp.clip(image * 2.0, 0.0, 1.0)
-        
-        # Display
-        colored = COLORMAP[(image * 255).astype(np.uint8)]
-        surface = pygame.surfarray.make_surface(colored)
-        screen.blit(surface, (0, 0))
-        
-        # Show FPS and controls
-        font = pygame.font.Font(None, 36)
-        fps_text = font.render(f"FPS: {clock.get_fps():.1f}", True, (255, 255, 255))
-        controls_text = font.render("Click and drag to move, Scroll to zoom", True, (255, 255, 255))
-        screen.blit(fps_text, (10, 10))
-        screen.blit(controls_text, (10, 50))
-        
-        pygame.display.flip()
-        clock.tick(60)
-    
-    pygame.quit()
+    return points, intensities, stds
 
 if __name__ == "__main__":
-    run_visualization()
+    # Create initial state
+    points, intensities, stds = create_random_points()
+    
+    # Create renderer function that matches the expected interface
+    def renderer(mouse_world_pos, view_center, view_size, width, height):
+        # Convert numpy arrays to jax arrays
+        mouse_world_pos = jnp.array(mouse_world_pos)
+        view_center = jnp.array(view_center)
+        view_size = jnp.array(view_size)
+        
+        image = render_view(points, intensities, stds, mouse_world_pos, 
+                          view_center, view_size, width, height)
+        return apply_colormap(image)
+    
+    # Run with pygame
+    config = WindowConfig(
+        width=1024,
+        height=768,
+        title="Fast Gaussian Renderer"
+    )
+    run_renderer(config, renderer)

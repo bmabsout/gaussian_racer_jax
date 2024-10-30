@@ -99,14 +99,49 @@ class PygameWindow:
         pygame.display.flip()
         self.clock.tick()  # Let VSync control framerate
 
-def run_app(
+def run_renderer(
     window_config: WindowConfig,
-    render_frame: Callable,
-    handle_event: Optional[Callable] = None
+    render_func: Callable[[np.ndarray, np.ndarray, np.ndarray, int, int], np.ndarray]
 ) -> None:
-    """Run a pygame application with given render and event handlers."""
+    """
+    Run a renderer that takes world coordinates and produces images.
+    
+    Args:
+        window_config: Window configuration
+        render_func: Function that takes:
+            - mouse_world_pos: np.ndarray[2] - Mouse position in world coordinates
+            - view_center: np.ndarray[2] - View center in world coordinates
+            - view_size: np.ndarray[2] - View size in world coordinates
+            - width: int - Output width in pixels
+            - height: int - Output height in pixels
+            Returns: np.ndarray[height, width, 3] - RGB image
+    """
     window = PygameWindow(window_config)
     running = True
+    
+    def render_frame(window: PygameWindow):
+        width, height = window.size
+        
+        # Convert mouse position to world coordinates
+        mouse_pos = np.array(pygame.mouse.get_pos())
+        mouse_world_pos = (mouse_pos - np.array([width/2, height/2])) / window.viewport.zoom + window.viewport.position
+        
+        # Calculate view size in world coordinates
+        view_size = np.array([width, height]) / window.viewport.zoom
+        
+        # Render
+        image = render_func(
+            mouse_world_pos,
+            window.viewport.position,
+            view_size,
+            width,
+            height
+        )
+        
+        # Display
+        window.display_image(image)
+        window.display_fps()
+        window.render_text("Click and drag to move, Scroll to zoom", (10, 50))
     
     while running:
         for event in pygame.event.get():
@@ -116,8 +151,6 @@ def run_app(
                 running = False
             else:
                 window.handle_input(event)
-                if handle_event is not None:
-                    handle_event(event, window)
         
         render_frame(window)
         window.update()
