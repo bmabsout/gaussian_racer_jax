@@ -49,7 +49,6 @@
               shellHook = ''
                 export PYTHONPATH=$PYTHONPATH:$(pwd) # to allow importing local packages as editable
                 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/run/opengl-driver/lib
-                # export XLA_FLAGS=--xla_gpu_cuda_data_dir=${pkgs.cudaPackages.cudatoolkit}
               '';
             }
         ) nixpkgs_configs
