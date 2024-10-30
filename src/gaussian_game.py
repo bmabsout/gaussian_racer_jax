@@ -1,9 +1,9 @@
 import numpy as np
-from gaussian_utils import apply_colormap
 import pygame
 from dataclasses import dataclass
 from src.pygame_utils import Scene
-from src.simple_gaussian_renderer import Gaussians, render_view, create_random_gaussians
+from src.simple_gaussian_renderer import Gaussians, render_view, create_random_gaussians, apply_colormap
+import jax.numpy as jnp
 
 @dataclass
 class ViewState:
@@ -27,14 +27,11 @@ class GaussianGame(Scene):
         
         # Gaussian state
         self.background = create_random_gaussians()
-        self.max_added = 1000
-        self.added = Gaussians(
-            pos=np.zeros((self.max_added, 2)),
-            std=np.zeros(self.max_added),
-            intensity=np.zeros(self.max_added)
+        self.added_gaussians = Gaussians(
+            pos=jnp.zeros((0, 2)),
+            std=jnp.zeros(0),
+            intensity=jnp.zeros(0)
         )
-        self.current_index = 0
-        self.active_gaussians = np.zeros(self.max_added, dtype=bool)
         
         # Rate limiting for adding gaussians
         self.last_add_time = 0
@@ -68,17 +65,16 @@ class GaussianGame(Scene):
         current_time = pygame.time.get_ticks() / 1000.0
         if (pygame.key.get_mods() & pygame.KMOD_SHIFT and 
             current_time - self.last_add_time >= self.add_interval):
-            # Add new gaussian
-            idx = self.current_index % self.max_added
+            # Create new gaussian
             world_pos = self.view.screen_to_world(mouse_pos, self.screen_size)
-            
-            self.added = Gaussians(
-                pos=self.added.pos.at[idx].set(world_pos),
-                std=self.added.std.at[idx].set(20.0),
-                intensity=self.added.intensity.at[idx].set(1.0)
+            new_gaussian = Gaussians(
+                pos=jnp.array([world_pos]),
+                std=jnp.array([20.0]),
+                intensity=jnp.array([1.0])
             )
-            self.active_gaussians = self.active_gaussians.at[idx].set(True)
-            self.current_index += 1
+            
+            # Add to existing gaussians
+            self.added_gaussians = Gaussians.compose(self.added_gaussians, new_gaussian)
             self.last_add_time = current_time
     
     def render(self) -> np.ndarray:
@@ -95,14 +91,8 @@ class GaussianGame(Scene):
             intensity=np.array([1.0])
         )
         
-        # Filter active gaussians
-        active_pos = self.added.pos[self.active_gaussians]
-        active_std = self.added.std[self.active_gaussians]
-        active_intensity = self.added.intensity[self.active_gaussians]
-        active_added = Gaussians(active_pos, active_std, active_intensity)
-        
         # Compose all gaussians
-        all_gaussians = Gaussians.compose(self.background, active_added, mouse_gaussian)
+        all_gaussians = Gaussians.compose(self.background, self.added_gaussians, mouse_gaussian)
         
         # Render view
         width, height = self.screen_size

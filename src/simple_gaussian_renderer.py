@@ -2,15 +2,7 @@ import jax
 import jax.numpy as jnp
 from functools import partial
 from typing import NamedTuple
-import numpy as np
-import matplotlib.cm as cm
-
-# Pre-compute colormap
-COLORMAP = (cm.get_cmap('inferno')(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
-
-def apply_colormap(image: np.ndarray) -> np.ndarray:
-    """Apply the inferno colormap to an image."""
-    return COLORMAP[(image * 255).astype(np.uint8)]
+from src.gaussian_utils import apply_colormap
 
 class Gaussians(NamedTuple):
     """Represents a collection of 2D Gaussians with parallel arrays."""
