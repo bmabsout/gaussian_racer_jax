@@ -2,6 +2,8 @@
 
 A JAX-based project for rendering 2D Gaussians with interactive visualization.
 
+![Gaussian Renderer Demo](gaussians.png)
+
 ## Overview
 
 This project implements two different methods for rendering 2D Gaussian distributions:
