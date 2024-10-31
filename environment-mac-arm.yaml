@@ -1,0 +1,12 @@
+name: gaussian-renderer
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.8
+  - numpy>=1.24.0
+  - pygame>=2.5.0
+  - matplotlib>=3.7.0
+  - pip
+  - pip:
+    - "jax-metal"

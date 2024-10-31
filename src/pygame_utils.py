@@ -1,72 +1,75 @@
 from dataclasses import dataclass
 import numpy as np
-from typing import Protocol, Optional
+from typing import Protocol
 import pygame
 
-@dataclass
+@dataclass(frozen=True)
 class WindowConfig:
     width: int
     height: int
     title: str = "Pygame Window"
-    resizable: bool = True
-    vsync: bool = True
 
-class Scene(Protocol):
-    """Protocol for scenes to implement."""
-    def update(self, dt: float) -> None:
-        """Update scene state."""
+class SceneState(Protocol):
+    """Protocol for scene state."""
+    def update(self, dt: float) -> 'SceneState':
+        """Return new state after update."""
+        ...
+    
+    def handle_event(self, event: pygame.event.Event) -> 'SceneState':
+        """Return new state after handling event."""
         ...
     
     def render(self) -> np.ndarray:
-        """Render scene to numpy array."""
-        ...
-    
-    def handle_event(self, event: pygame.event.Event) -> None:
-        """Handle pygame events."""
+        """Render current state to numpy array."""
         ...
 
+@dataclass(frozen=True)
 class GameEngine:
-    """Core game engine handling window and scene management."""
-    def __init__(self, config: WindowConfig):
-        pygame.init()
-        self.screen = pygame.display.set_mode(
-            (config.width, config.height),
-            pygame.RESIZABLE if config.resizable else 0,
-            vsync=1 if config.vsync else 0
-        )
-        pygame.display.set_caption(config.title)
-        self.clock = pygame.time.Clock()
-        self.current_scene: Optional[Scene] = None
+    """Functional game engine."""
+    config: WindowConfig
     
-    def run(self, scene: Scene) -> None:
-        """Run the game with given scene."""
-        self.current_scene = scene
-        running = True
+    @staticmethod
+    def create(config: WindowConfig) -> 'GameEngine':
+        """Create initial engine state."""
+        pygame.init()
+        return GameEngine(config=config)
+
+    def run(self, initial_scene: SceneState) -> None:
+        """Run the game loop."""
+        screen = pygame.display.set_mode(
+            (self.config.width, self.config.height),
+            pygame.RESIZABLE,
+            vsync=1
+        )
+        pygame.display.set_caption(self.config.title)
+        clock = pygame.time.Clock()
         
-        while running:
-            # Handle events
+        scene = initial_scene
+        last_time = pygame.time.get_ticks() / 1000.0
+        
+        while True:
+            current_time = pygame.time.get_ticks() / 1000.0
+            dt = current_time - last_time
+            last_time = current_time
+            
             for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                    running = False
-                else:
-                    self.current_scene.handle_event(event)
+                match event.type:
+                    case pygame.QUIT:
+                        pygame.quit()
+                        return
+                    case _:
+                        scene = scene.handle_event(event)
             
-            # Update
-            dt = self.clock.tick() / 1000.0  # Convert to seconds
-            self.current_scene.update(dt)
+            scene = scene.update(dt)
             
-            # Render
-            image = self.current_scene.render()
+            image = scene.render()
             surface = pygame.surfarray.make_surface(image)
-            self.screen.blit(surface, (0, 0))
+            screen.blit(surface, (0, 0))
             
-            # Show FPS
+            fps = 1.0 / dt if dt > 0 else 0
             font = pygame.font.Font(None, 36)
-            fps_text = font.render(f"FPS: {self.clock.get_fps():.1f}", True, (255, 255, 255))
-            self.screen.blit(fps_text, (10, 10))
+            fps_text = font.render(f"FPS: {fps:.1f}", True, (255, 255, 255))
+            screen.blit(fps_text, (10, 10))
             
             pygame.display.flip()
-        
-        pygame.quit() 
+            clock.tick()
