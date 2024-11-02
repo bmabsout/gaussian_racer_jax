@@ -1,10 +1,8 @@
 import numpy as np
 from dataclasses import dataclass, replace
-import glfw
-import moderngl
+import wgpu
+from wgpu.gui.auto import WgpuCanvas, run
 from src.game_utils import SceneState, WindowConfig, GameEngine
-from src.view_transform import ViewTransform
-from typing import Optional, NamedTuple
 
 class Gaussians(NamedTuple):
     """Represents a collection of 2D Gaussians."""
@@ -26,123 +24,134 @@ class GameState(SceneState):
     """Complete game state."""
     view: ViewTransform
     gaussians: Gaussians
-    ctx: moderngl.Context
-    program: moderngl.Program
-    vao: moderngl.VertexArray
-    instance_buffer: moderngl.Buffer  # New: for instanced rendering
+    device: wgpu.GPUDevice
+    pipeline: wgpu.GPURenderPipeline
+    bind_group: wgpu.GPUBindGroup
+    vertex_buffer: wgpu.GPUBuffer
+    instance_buffer: wgpu.GPUBuffer
     
     @staticmethod
-    def create(width: int, height: int, ctx: moderngl.Context) -> 'GameState':
-        program = ctx.program(
-            vertex_shader='''
-                #version 430
+    def create(width: int, height: int, canvas: WgpuCanvas) -> 'GameState':
+        # Create WebGPU device
+        adapter = wgpu.request_adapter(canvas=canvas, power_preference="high-performance")
+        device = adapter.request_device()
+        
+        # Create shader
+        shader = device.create_shader_module(
+            label="gaussian_shader",
+            code="""
+            struct VertexInput {
+                @location(0) position: vec2f,
+                @location(1) texcoord: vec2f,
+                @location(2) instance_pos: vec2f,
+                @location(3) instance_std: f32,
+                @location(4) instance_intensity: f32,
+            };
+
+            struct ViewUniform {
+                world_center: vec2f,
+                world_size: vec2f,
+            };
+            @group(0) @binding(0) var<uniform> view: ViewUniform;
+
+            struct VertexOutput {
+                @builtin(position) position: vec4f,
+                @location(0) texcoord: vec2f,
+                @location(1) std: f32,
+                @location(2) intensity: f32,
+            };
+
+            @vertex
+            fn vs_main(in: VertexInput) -> VertexOutput {
+                var out: VertexOutput;
                 
-                // Quad vertices
-                in vec2 in_position;
-                in vec2 in_texcoord;
+                // Transform instance position to screen space
+                let screen_pos = (in.instance_pos - view.world_center) / (view.world_size * 0.5);
                 
-                // Instance data
-                in vec2 in_instance_pos;
-                in float in_instance_std;
-                in float in_instance_intensity;
+                // Scale quad by standard deviation
+                let scaled_pos = screen_pos + in.position * (4.0 * in.instance_std / (view.world_size * 0.5));
                 
-                // View uniforms
-                uniform vec2 u_world_center;
-                uniform vec2 u_world_size;
+                out.position = vec4f(scaled_pos, 0.0, 1.0);
+                out.texcoord = in.texcoord;
+                out.std = in.instance_std;
+                out.intensity = in.instance_intensity;
+                return out;
+            }
+
+            @fragment
+            fn fs_main(in: VertexOutput) -> @location(0) vec4f {
+                // Compute gaussian value
+                let sq_dist = dot(in.texcoord, in.texcoord);
+                let value = in.intensity * exp(-0.5 * sq_dist);
                 
-                out vec2 v_texcoord;
-                out float v_std;
-                out float v_intensity;
-                
-                void main() {
-                    // Pass through instance data
-                    v_std = in_instance_std;
-                    v_intensity = in_instance_intensity;
-                    v_texcoord = in_texcoord;
-                    
-                    // Transform instance position to screen space
-                    vec2 screen_pos = (in_instance_pos - u_world_center) / (u_world_size * 0.5);
-                    
-                    // Scale quad by standard deviation (in screen space)
-                    // Using 8 standard deviations for very wide coverage
-                    vec2 scaled_pos = screen_pos + in_position * (8.0 * in_instance_std / (u_world_size * 0.5));
-                    
-                    gl_Position = vec4(scaled_pos, 0.0, 1.0);
-                }
-            ''',
-            fragment_shader='''
-                #version 430
-                
-                in vec2 v_texcoord;
-                in float v_std;
-                in float v_intensity;
-                
-                out vec4 f_color;
-                
-                vec3 inferno(float t) {
-                    const vec3 c0 = vec3(0.0002189403691192265, 0.001651004631001012, -0.01948089843709184);
-                    const vec3 c1 = vec3(0.1065134194856116, 0.5639564367884091, 3.932712388889277);
-                    const vec3 c2 = vec3(11.60249308247187, -3.972853965665698, -15.9423941062914);
-                    const vec3 c3 = vec3(-41.70399613139459, 17.43639888205313, 44.35414519872813);
-                    const vec3 c4 = vec3(77.162935699427, -33.40235894210092, -81.80730925738993);
-                    const vec3 c5 = vec3(-71.31942824499214, 32.62606426397723, 73.20951985803202);
-                    const vec3 c6 = vec3(25.13112622477341, -12.24266895238567, -23.07032500287172);
-                    return c0 + t*(c1 + t*(c2 + t*(c3 + t*(c4 + t*(c5 + t*c6)))));
-                }
-                
-                void main() {
-                    // Compute gaussian value
-                    float sq_dist = dot(v_texcoord, v_texcoord);
-                    float value = v_intensity * exp(-0.5 * sq_dist);
-                    
-                    // Apply colormap
-                    vec3 color = inferno(clamp(value, 0.0, 1.0));
-                    f_color = vec4(color, value);  // Use value as alpha for proper blending
-                }
-            '''
+                // Apply inferno colormap (simplified for now)
+                let color = vec3f(value);  // Replace with proper inferno implementation
+                return vec4f(color, value);
+            }
+            """
         )
         
-        # Create quad vertices (made much larger for better coverage)
-        vertices = np.array([
-            -4.0, -4.0,  -4.0, -4.0,  # Quadrupled the size of the quad
-             4.0, -4.0,   4.0, -4.0,
-             4.0,  4.0,   4.0,  4.0,
-            -4.0,  4.0,  -4.0,  4.0,
-        ], dtype='f4')
-        
-        indices = np.array([0, 1, 2, 0, 2, 3], dtype='i4')
-        
-        vbo = ctx.buffer(vertices.tobytes())
-        ibo = ctx.buffer(indices.tobytes())
-        
-        # Create instance data
-        gaussians = create_random_gaussians()
-        instance_data = np.zeros(len(gaussians.pos), dtype=[
-            ('pos', 'f4', 2),
-            ('std', 'f4', 1),
-            ('intensity', 'f4', 1),
-        ])
-        instance_data['pos'] = gaussians.pos
-        instance_data['std'] = gaussians.std
-        instance_data['intensity'] = gaussians.intensity
-        instance_buffer = ctx.buffer(instance_data.tobytes())
-        
-        vao = ctx.vertex_array(
-            program,
-            [
-                (vbo, '2f 2f', 'in_position', 'in_texcoord'),
-                (instance_buffer, '2f 1f 1f/i', 'in_instance_pos', 'in_instance_std', 'in_instance_intensity'),
-            ],
-            ibo
+        # Create pipeline
+        pipeline = device.create_render_pipeline(
+            label="gaussian_pipeline",
+            layout=device.create_pipeline_layout(
+                bind_group_layouts=[
+                    device.create_bind_group_layout(
+                        entries=[{
+                            "binding": 0,
+                            "visibility": wgpu.ShaderStage.VERTEX,
+                            "buffer": {"type": "uniform"}
+                        }]
+                    )
+                ]
+            ),
+            vertex={
+                "module": shader,
+                "entry_point": "vs_main",
+                "buffers": [
+                    # Vertex buffer layout
+                    {
+                        "array_stride": 16,
+                        "attributes": [
+                            {"format": "float32x2", "offset": 0, "shader_location": 0},  # position
+                            {"format": "float32x2", "offset": 8, "shader_location": 1},  # texcoord
+                        ]
+                    },
+                    # Instance buffer layout
+                    {
+                        "array_stride": 16,
+                        "step_mode": "instance",
+                        "attributes": [
+                            {"format": "float32x2", "offset": 0, "shader_location": 2},  # instance_pos
+                            {"format": "float32", "offset": 8, "shader_location": 3},    # instance_std
+                            {"format": "float32", "offset": 12, "shader_location": 4},   # instance_intensity
+                        ]
+                    }
+                ]
+            },
+            fragment={
+                "module": shader,
+                "entry_point": "fs_main",
+                "targets": [{"format": canvas.get_preferred_format()}]
+            },
+            primitive={
+                "topology": "triangle-list",
+                "front_face": "ccw",
+                "cull_mode": "none"
+            },
+            depth_stencil=None,
+            multisample={"count": 1}
         )
+        
+        # Create buffers and bind groups
+        # ... (rest of initialization)
         
         return GameState(
             view=ViewTransform.create(width, height),
-            gaussians=gaussians,
-            ctx=ctx,
-            program=program,
-            vao=vao,
-            instance_buffer=instance_buffer
+            gaussians=create_random_gaussians(),
+            device=device,
+            pipeline=pipeline,
+            # ... other fields
         )
     
     def update(self, dt: float, window: int) -> Optional['GameState']:

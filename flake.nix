@@ -1,7 +1,6 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    # nixgl.url = "github:kenranunderscore/nixGL";
   };
 
   outputs = {self, nixpkgs, ... }@inp:
@@ -14,44 +13,35 @@
           allowUnfree = true;
         };
       };
-      # Define supported systems
       supportedSystems = [
         "x86_64-linux"
         "aarch64-linux"
         "x86_64-darwin"
         "aarch64-darwin"
       ];
-      # Helper function to generate attributes for all supported systems
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
     in
     {
-      # enter this python environment by executing `nix shell .#with_cuda`
       devShells = forAllSystems (system:
         nixpkgs.lib.attrsets.mapAttrs (name: config:
           let pkgs = import nixpkgs { 
-                # overlays=[nixgl.overlay]; 
                 inherit system config;
               };
-              python = pkgs.python311.override {
-                # packageOverrides = import ./nix/python-overrides.nix;
-              };
+              python = pkgs.python311.override {};
           in pkgs.mkShell {
               buildInputs = [
-                  # pkgs.nixgl.nixGLIntel
                   pkgs.cudaPackages.cudatoolkit
                   (python.withPackages (p: with p; [
-                    jax
-                    jaxlib
-                    moderngl
+                    numpy
                     matplotlib
-                    pygame
-                    glfw  # Python GLFW bindings
+                    pip
                   ]))
-                  pkgs.libGL
+                  pkgs.vulkan-loader
+                  pkgs.vulkan-headers
               ];
               shellHook = ''
-                export PYTHONPATH=$PYTHONPATH:$(pwd) # to allow importing local packages as editable
-                export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/run/opengl-driver/lib:${pkgs.lib.makeLibraryPath [pkgs.libGL]}
+                export PYTHONPATH=$PYTHONPATH:$(pwd)
+                pip install wgpu
               '';
             }
         ) nixpkgs_configs
