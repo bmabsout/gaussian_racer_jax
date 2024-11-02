@@ -36,40 +36,34 @@ class GameEngine:
 
     def run(self, initial_scene: SceneState) -> None:
         """Run the game loop."""
-        screen = pygame.display.set_mode(
-            (self.config.width, self.config.height),
-            pygame.RESIZABLE,
-            vsync=1
-        )
-        pygame.display.set_caption(self.config.title)
-        clock = pygame.time.Clock()
+        pygame.event.set_allowed([pygame.QUIT, pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN, 
+                                pygame.MOUSEBUTTONUP, pygame.WINDOWRESIZED])
         
+        clock = pygame.time.Clock()
         scene = initial_scene
+        running = True
         last_time = pygame.time.get_ticks() / 1000.0
         
-        while True:
+        while running:
             current_time = pygame.time.get_ticks() / 1000.0
             dt = current_time - last_time
             last_time = current_time
             
             for event in pygame.event.get():
-                match event.type:
-                    case pygame.QUIT:
-                        pygame.quit()
-                        return
-                    case _:
-                        scene = scene.handle_event(event)
+                if event.type == pygame.QUIT:
+                    running = False
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    running = False
+                else:
+                    scene = scene.handle_event(event)
             
             scene = scene.update(dt)
+            scene.render()  # Direct rendering, no return value needed
             
-            image = scene.render()
-            surface = pygame.surfarray.make_surface(image)
-            screen.blit(surface, (0, 0))
-            
-            fps = 1.0 / dt if dt > 0 else 0
-            font = pygame.font.Font(None, 36)
-            fps_text = font.render(f"FPS: {fps:.1f}", True, (255, 255, 255))
-            screen.blit(fps_text, (10, 10))
+            fps = clock.get_fps()
+            # Render FPS using OpenGL text rendering or overlay
             
             pygame.display.flip()
             clock.tick()
+        
+        pygame.quit()
