@@ -32,18 +32,22 @@
                 # overlays=[nixgl.overlay]; 
                 inherit system config;
               };
-              python = pkgs.python311.override {};
+              python = pkgs.python311.override {
+                # packageOverrides = import ./nix/python-overrides.nix;
+              };
           in pkgs.mkShell {
               buildInputs = [
+                  # pkgs.nixgl.nixGLIntel
                   pkgs.cudaPackages.cudatoolkit
-                  pkgs.glfw
                   (python.withPackages (p: with p; [
                     jax
                     jaxlib
                     moderngl
-                    glfw  # Python GLFW bindings
                     matplotlib
+                    pygame
+                    glfw  # Python GLFW bindings
                   ]))
+                  pkgs.libGL
               ];
               shellHook = ''
                 export PYTHONPATH=$PYTHONPATH:$(pwd) # to allow importing local packages as editable

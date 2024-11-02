@@ -1,53 +1,49 @@
 from dataclasses import dataclass, replace
-import jax
-import jax.numpy as jnp
+import numpy as np
 from typing import NamedTuple, Optional, Tuple
+import glfw
 
 class Rectangle(NamedTuple):
     """A rectangle in world space."""
-    center: jnp.ndarray
+    center: np.ndarray
     width: float
     height: float
 
 @dataclass(frozen=True)
 class ViewTransform:
     """Handles coordinate transformations and view manipulation."""
-    screen_size: jnp.ndarray  # (width, height)
+    screen_size: np.ndarray  # (width, height)
     world_rect: Rectangle
-    positions: jnp.ndarray    # Cache of world-space positions grid
     dragging: bool = False
-    last_drag_pos: Optional[jnp.ndarray] = None
+    last_drag_pos: Optional[np.ndarray] = None
     
     @staticmethod
     def create(width: int, height: int, initial_scale: float = 2.0) -> 'ViewTransform':
         """Create initial view transform with given screen size."""
-        screen_size = jnp.array([width, height])
+        screen_size = np.array([width, height])
         rect = Rectangle(
-            center=jnp.zeros(2),
+            center=np.zeros(2),
             width=width * initial_scale,
             height=height * initial_scale
         )
-        transform = ViewTransform(
+        return ViewTransform(
             screen_size=screen_size,
             world_rect=rect,
-            positions=None,
             dragging=False,
             last_drag_pos=None
         )
-        positions = transform.create_position_grid()
-        return replace(transform, positions=positions)
     
-    def screen_to_world(self, screen_pos: jnp.ndarray) -> jnp.ndarray:
+    def screen_to_world(self, screen_pos: np.ndarray) -> np.ndarray:
         """Convert screen coordinates to world coordinates."""
-        screen_scale = jnp.array([self.world_rect.width, self.world_rect.height]) / self.screen_size
+        screen_scale = np.array([self.world_rect.width, self.world_rect.height]) / self.screen_size
         return (screen_pos - self.screen_size/2) * screen_scale + self.world_rect.center
     
-    def world_to_screen(self, world_pos: jnp.ndarray) -> jnp.ndarray:
+    def world_to_screen(self, world_pos: np.ndarray) -> np.ndarray:
         """Convert world coordinates to screen coordinates."""
-        screen_scale = self.screen_size / jnp.array([self.world_rect.width, self.world_rect.height])
+        screen_scale = self.screen_size / np.array([self.world_rect.width, self.world_rect.height])
         return (world_pos - self.world_rect.center) * screen_scale + self.screen_size/2
     
-    def update(self, mouse_pos: jnp.ndarray) -> Tuple['ViewTransform', bool]:
+    def update(self, mouse_pos: np.ndarray) -> Tuple['ViewTransform', bool]:
         """Update view based on current mouse position."""
         if not self.dragging:
             return self, False
@@ -56,13 +52,38 @@ class ViewTransform:
             return replace(self, last_drag_pos=mouse_pos), False
             
         drag_delta = mouse_pos - self.last_drag_pos
-        if jnp.any(drag_delta != 0):
+        if np.any(drag_delta != 0):
             new_transform = self.move_by_screen_delta(drag_delta)
             return replace(new_transform, last_drag_pos=mouse_pos), True
             
         return replace(self, last_drag_pos=mouse_pos), False
     
-    def handle_mouse_down(self, mouse_pos: jnp.ndarray) -> 'ViewTransform':
+    def handle_event(self, window: int, scroll_offset: tuple[float, float]) -> Optional['ViewTransform']:
+        """Handle GLFW window events."""
+        # Handle scroll first
+        _, scroll_y = scroll_offset
+        if scroll_y != 0:
+            mouse_pos = np.array(glfw.get_cursor_pos(window))
+            zoom_factor = 0.9 if scroll_y > 0 else 1.1
+            return self.zoom(zoom_factor, mouse_pos)
+        
+        # Handle mouse buttons
+        left_pressed = glfw.get_mouse_button(window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS
+        if left_pressed and not self.dragging:
+            mouse_pos = np.array(glfw.get_cursor_pos(window))
+            return self.handle_mouse_down(mouse_pos)
+        elif not left_pressed and self.dragging:
+            return self.handle_mouse_up()
+        
+        # Handle window resize
+        width, height = glfw.get_window_size(window)
+        current_size = np.array([width, height])
+        if not np.array_equal(current_size, self.screen_size):
+            return self.handle_resize(width, height)
+        
+        return None
+    
+    def handle_mouse_down(self, mouse_pos: np.ndarray) -> 'ViewTransform':
         """Start dragging from given screen position."""
         return replace(self, dragging=True, last_drag_pos=mouse_pos)
     
@@ -70,14 +91,9 @@ class ViewTransform:
         """Stop dragging."""
         return replace(self, dragging=False, last_drag_pos=None)
     
-    def handle_scroll(self, mouse_pos: jnp.ndarray, scroll_y: float) -> 'ViewTransform':
-        """Handle scroll wheel input."""
-        zoom_factor = 1.1 if scroll_y > 0 else 1/1.1
-        return self.zoom(zoom_factor, mouse_pos)
-    
     def handle_resize(self, width: int, height: int) -> 'ViewTransform':
         """Handle window resize."""
-        new_screen_size = jnp.array([width, height])
+        new_screen_size = np.array([width, height])
         aspect_ratio = width / height
         old_aspect_ratio = self.screen_size[0] / self.screen_size[1]
         
@@ -102,24 +118,11 @@ class ViewTransform:
         )
         return replace(new_transform, positions=new_transform.create_position_grid())
     
-    def create_position_grid(self) -> jnp.ndarray:
-        """Create a grid of world-space positions for rendering."""
-        rect_size = jnp.array([self.world_rect.width, self.world_rect.height])
-        width, height = int(self.screen_size[0]), int(self.screen_size[1])
-        
-        x = jnp.linspace(-rect_size[0]/2, rect_size[0]/2, width)
-        y = jnp.linspace(-rect_size[1]/2, rect_size[1]/2, height)
-        X, Y = jnp.meshgrid(x, y, indexing='ij')
-        return jnp.stack([
-            X + self.world_rect.center[0],
-            Y + self.world_rect.center[1]
-        ], axis=-1)
-    
-    def move_by_screen_delta(self, screen_delta: jnp.ndarray) -> 'ViewTransform':
+    def move_by_screen_delta(self, screen_delta: np.ndarray) -> 'ViewTransform':
         """Move view by a screen-space delta."""
-        rect_size = jnp.array([self.world_rect.width, self.world_rect.height])
+        rect_size = np.array([self.world_rect.width, self.world_rect.height])
         screen_scale = rect_size / self.screen_size
-        world_delta = screen_delta * screen_scale
+        world_delta = screen_delta * screen_scale * np.array([1.0, -1.0])
         
         new_rect = Rectangle(
             center=self.world_rect.center - world_delta,
@@ -127,12 +130,9 @@ class ViewTransform:
             height=self.world_rect.height
         )
         
-        if jnp.any(jnp.abs(world_delta) > 0.1 * rect_size.min()):
-            new_positions = self.create_position_grid()
-            return replace(self, world_rect=new_rect, positions=new_positions)
         return replace(self, world_rect=new_rect)
     
-    def zoom(self, factor: float, pivot_screen_pos: jnp.ndarray) -> 'ViewTransform':
+    def zoom(self, factor: float, pivot_screen_pos: np.ndarray) -> 'ViewTransform':
         """Zoom view, keeping the pivot point (in screen space) fixed in world space."""
         old_world_pos = self.screen_to_world(pivot_screen_pos)
         
@@ -152,8 +152,4 @@ class ViewTransform:
             height=new_rect.height
         )
         
-        if abs(1 - factor) > 0.05:
-            final_transform = replace(self, world_rect=final_rect)
-            new_positions = final_transform.create_position_grid()
-            return replace(final_transform, positions=new_positions)
         return replace(self, world_rect=final_rect)
