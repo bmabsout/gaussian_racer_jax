@@ -14,7 +14,7 @@ class ViewTransform:
     """Handles coordinate transformations and view manipulation."""
     screen_size: np.ndarray  # (width, height)
     world_rect: Rectangle
-    canvas: WgpuCanvas  # Add canvas reference
+    canvas: WgpuCanvas
     dragging: bool = False
     last_drag_pos: Optional[np.ndarray] = None
     
@@ -70,29 +70,6 @@ class ViewTransform:
         
         return None
     
-    def zoom(self, factor: float) -> 'ViewTransform':
-        """Zoom view."""
-        new_rect = Rectangle(
-            center=self.world_rect.center,
-            width=self.world_rect.width * factor,
-            height=self.world_rect.height * factor
-        )
-        return replace(self, world_rect=new_rect)
-    
-    def move_by_screen_delta(self, screen_delta: np.ndarray) -> 'ViewTransform':
-        """Move view by a screen-space delta."""
-        rect_size = np.array([self.world_rect.width, self.world_rect.height])
-        screen_scale = rect_size / self.screen_size
-        world_delta = screen_delta * screen_scale * np.array([1.0, -1.0])  # Flip y-axis
-        
-        new_rect = Rectangle(
-            center=self.world_rect.center - world_delta,
-            width=self.world_rect.width,
-            height=self.world_rect.height
-        )
-        
-        return replace(self, world_rect=new_rect)
-    
     def handle_resize(self, width: int, height: int) -> 'ViewTransform':
         """Handle window resize event."""
         new_screen_size = np.array([width, height])
@@ -122,3 +99,26 @@ class ViewTransform:
             screen_size=new_screen_size,
             world_rect=new_rect
         )
+    
+    def zoom(self, factor: float) -> 'ViewTransform':
+        """Zoom view."""
+        new_rect = Rectangle(
+            center=self.world_rect.center,
+            width=self.world_rect.width * factor,
+            height=self.world_rect.height * factor
+        )
+        return replace(self, world_rect=new_rect)
+    
+    def move_by_screen_delta(self, screen_delta: np.ndarray) -> 'ViewTransform':
+        """Move view by a screen-space delta."""
+        rect_size = np.array([self.world_rect.width, self.world_rect.height])
+        screen_scale = rect_size / self.screen_size
+        world_delta = screen_delta * screen_scale * np.array([1.0, -1.0])  # Flip y-axis
+        
+        new_rect = Rectangle(
+            center=self.world_rect.center - world_delta,
+            width=self.world_rect.width,
+            height=self.world_rect.height
+        )
+        
+        return replace(self, world_rect=new_rect)

@@ -40,7 +40,7 @@ class GameEngine:
     @staticmethod
     def create(config: WindowConfig) -> 'GameEngine':
         """Create initial engine state."""
-        # Create canvas first
+        # Create canvas with size and title
         canvas = WgpuCanvas(size=(config.width, config.height), title=config.title)
         engine = GameEngine(config=config, canvas=canvas)
         

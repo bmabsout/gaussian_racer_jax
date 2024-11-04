@@ -1,19 +1,59 @@
 import numpy as np
-from dataclasses import dataclass, replace
-from typing import NamedTuple, Optional
+from dataclasses import dataclass, replace, field
+from typing import NamedTuple, Optional, List
 import wgpu
-from wgpu.gui.auto import WgpuCanvas, run
-from src.game_utils import SceneState, WindowConfig, GameEngine
-from src.view_transform import ViewTransform
+from wgpu.gui.auto import WgpuCanvas
 import glfw
+from src.game_utils import SceneState, WindowConfig, GameEngine
+from src.view_transform import ViewTransform, Rectangle
 
 class Gaussians(NamedTuple):
     """Represents a collection of 2D Gaussians."""
     pos: np.ndarray    # shape: (n, 2) for positions
     std: np.ndarray    # shape: (n,)
     intensity: np.ndarray  # shape: (n,)
+    
+    @staticmethod
+    def create_spatial_grid(gaussians: 'Gaussians', grid_size: int = 32) -> tuple[np.ndarray, np.ndarray]:
+        """Create spatial grid for culling distant gaussians."""
+        # Create grid cells (each cell stores indices of gaussians that overlap it)
+        cells = []
+        for _ in range(grid_size * grid_size):
+            cells.append([])
+            
+        # Compute grid bounds
+        pos_min = gaussians.pos.min(axis=0)
+        pos_max = gaussians.pos.max(axis=0)
+        cell_size = (pos_max - pos_min) / grid_size
+        
+        # Assign gaussians to cells they overlap
+        for i, (pos, std) in enumerate(zip(gaussians.pos, gaussians.std)):
+            # Get cell range this gaussian might affect (using 4 sigma radius)
+            radius = std * 4.0
+            min_cell = np.floor((pos - radius - pos_min) / cell_size).astype(np.int32)
+            max_cell = np.ceil((pos + radius - pos_min) / cell_size).astype(np.int32)
+            
+            # Clamp to grid bounds
+            min_cell = np.clip(min_cell, 0, grid_size - 1)
+            max_cell = np.clip(max_cell, 0, grid_size - 1)
+            
+            # Add gaussian index to all overlapped cells
+            for y in range(min_cell[1], max_cell[1] + 1):
+                for x in range(min_cell[0], max_cell[0] + 1):
+                    cells[y * grid_size + x].append(i)
+        
+        # Convert to fixed-size arrays for GPU
+        max_per_cell = max(len(cell) for cell in cells)
+        grid_data = np.full((grid_size * grid_size, max_per_cell), -1, dtype=np.int32)
+        cell_counts = np.zeros(grid_size * grid_size, dtype=np.int32)
+        
+        for i, cell in enumerate(cells):
+            cell_counts[i] = len(cell)
+            grid_data[i, :len(cell)] = cell
+            
+        return grid_data, cell_counts
 
-def create_random_gaussians(n_points: int = 100000, spread: float = 500.0) -> Gaussians:
+def create_random_gaussians(n_points: int = 10000, spread: float = 500.0) -> Gaussians:
     """Create random gaussian points in world space."""
     rng = np.random.default_rng(0)
     return Gaussians(
@@ -36,7 +76,7 @@ class GameState(SceneState):
     
     @staticmethod
     def create(width: int, height: int, canvas: WgpuCanvas) -> 'GameState':
-        # Create WebGPU device
+        # Create adapter and device
         adapter = wgpu.gpu.request_adapter_sync(
             canvas=canvas,
             power_preference="high-performance"
@@ -53,7 +93,10 @@ class GameState(SceneState):
             view_formats=[]
         )
         
-        # Create shader program
+        # Create gaussians
+        gaussians = create_random_gaussians()
+        
+        # Create shader
         shader = device.create_shader_module(
             label="gaussian_shader",
             code="""
@@ -79,14 +122,24 @@ class GameState(SceneState):
             };
 
             @vertex
-            fn vs_main(in: VertexInput) -> VertexOutput {
+            fn vs_main(in: VertexInput, @builtin(instance_index) instance_idx: u32) -> VertexOutput {
                 var out: VertexOutput;
                 
-                // Transform instance position to screen space
+                // Convert instance position to screen space
                 let screen_pos = (in.instance_pos - view.world_center) / (view.world_size * 0.5);
                 
+                // Frustum culling - only render if gaussian might be visible
+                let scaled_stddev = in.instance_stddev / (view.world_size.x * 0.5);
+                let radius = 4.0 * scaled_stddev;  // 4 sigma coverage
+                
+                if (abs(screen_pos.x) > 1.0 + radius || abs(screen_pos.y) > 1.0 + radius) {
+                    // Gaussian is too far outside view, cull it
+                    out.position = vec4f(0.0, 0.0, -1.0, 1.0);
+                    return out;
+                }
+                
                 // Scale quad by standard deviation
-                let scaled_pos = screen_pos + in.position * (4.0 * in.instance_stddev / (view.world_size * 0.5));
+                let scaled_pos = screen_pos + in.position * (4.0 * scaled_stddev);
                 
                 out.position = vec4f(scaled_pos, 0.0, 1.0);
                 out.texcoord = in.texcoord;
@@ -95,8 +148,15 @@ class GameState(SceneState):
                 return out;
             }
 
+            @fragment
+            fn fs_main(in: VertexOutput) -> @location(0) vec4f {
+                let sq_dist = dot(in.texcoord, in.texcoord);
+                let value = in.intensity * exp(-0.5 * sq_dist);
+                let color = inferno(clamp(value, 0.0, 1.0));
+                return vec4f(color, value);
+            }
+            
             fn inferno(t: f32) -> vec3f {
-                // Inferno colormap coefficients
                 let c0 = vec3f(0.0002189403691192265, 0.001651004631001012, -0.01948089843709184);
                 let c1 = vec3f(0.1065134194856116, 0.5639564367884091, 3.932712388889277);
                 let c2 = vec3f(11.60249308247187, -3.972853965665698, -15.9423941062914);
@@ -113,35 +173,28 @@ class GameState(SceneState):
 
                 return c0 + c1 * t + c2 * t2 + c3 * t3 + c4 * t4 + c5 * t5 + c6 * t6;
             }
-
-            @fragment
-            fn fs_main(in: VertexOutput) -> @location(0) vec4f {
-                // Compute gaussian value
-                let sq_dist = dot(in.texcoord, in.texcoord);
-                let std_sq = in.stddev * in.stddev;
-                let value = in.intensity * exp(-0.5 * sq_dist);
-                
-                // Apply inferno colormap with proper alpha blending
-                let color = inferno(clamp(value, 0.0, 1.0));
-                return vec4f(color, value);  // Use value as alpha for proper blending
-            }
             """
+        )
+        
+        # Create pipeline layout
+        bind_group_layout = device.create_bind_group_layout(
+            entries=[
+                {
+                    "binding": 0,
+                    "visibility": wgpu.ShaderStage.VERTEX,
+                    "buffer": {"type": "uniform"}
+                }
+            ]
+        )
+        
+        pipeline_layout = device.create_pipeline_layout(
+            bind_group_layouts=[bind_group_layout]
         )
         
         # Create pipeline
         pipeline = device.create_render_pipeline(
             label="gaussian_pipeline",
-            layout=device.create_pipeline_layout(
-                bind_group_layouts=[
-                    device.create_bind_group_layout(
-                        entries=[{
-                            "binding": 0,
-                            "visibility": wgpu.ShaderStage.VERTEX,
-                            "buffer": {"type": "uniform"}
-                        }]
-                    )
-                ]
-            ),
+            layout=pipeline_layout,
             vertex={
                 "module": shader,
                 "entry_point": "vs_main",
@@ -195,22 +248,21 @@ class GameState(SceneState):
         # Create vertex buffer with 6 vertices for 2 triangles
         vertices = np.array([
             # First triangle
-            -1.0, -1.0,  -1.0, -1.0,  # pos, texcoord for vertex 0
-             1.0, -1.0,   1.0, -1.0,  # pos, texcoord for vertex 1
-             1.0,  1.0,   1.0,  1.0,  # pos, texcoord for vertex 2
-            # Second triangle
-            -1.0, -1.0,  -1.0, -1.0,  # pos, texcoord for vertex 0 again
-             1.0,  1.0,   1.0,  1.0,  # pos, texcoord for vertex 2 again
-            -1.0,  1.0,  -1.0,  1.0,  # pos, texcoord for vertex 3
-        ], dtype=np.float32)*4.0
+            -4.0, -4.0,  -4.0, -4.0,  # pos, texcoord for vertex 0
+             4.0, -4.0,   4.0, -4.0,  # pos, texcoord for vertex 1
+             4.0,  4.0,   4.0,  4.0,  # pos, texcoord for vertex 2
+            # Second triangle (repeating vertices as needed)
+            -4.0, -4.0,  -4.0, -4.0,  # pos, texcoord for vertex 0
+             4.0,  4.0,   4.0,  4.0,  # pos, texcoord for vertex 2
+            -4.0,  4.0,  -4.0,  4.0,  # pos, texcoord for vertex 3
+        ], dtype=np.float32)
         
         vertex_buffer = device.create_buffer_with_data(
             data=vertices,
             usage=wgpu.BufferUsage.VERTEX
         )
         
-        # Create instance data and buffer
-        gaussians = create_random_gaussians()
+        # Create instance buffer
         instance_data = np.zeros(len(gaussians.pos), dtype=[
             ('pos', 'f4', 2),
             ('std', 'f4', 1),
@@ -222,17 +274,18 @@ class GameState(SceneState):
         
         instance_buffer = device.create_buffer_with_data(
             data=instance_data,
-            usage=wgpu.BufferUsage.VERTEX
+            usage=wgpu.BufferUsage.VERTEX | wgpu.BufferUsage.COPY_DST
         )
         
-        # Create view uniform buffer
+        # Create uniform buffer
         view_uniform_buffer = device.create_buffer(
             size=16,  # vec2f world_center + vec2f world_size
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
         
+        # Create bind groups
         bind_group = device.create_bind_group(
-            layout=pipeline.get_bind_group_layout(0),
+            layout=bind_group_layout,
             entries=[{
                 "binding": 0,
                 "resource": {"buffer": view_uniform_buffer}
@@ -322,7 +375,7 @@ class GameState(SceneState):
         render_pass.set_vertex_buffer(0, self.vertex_buffer)
         render_pass.set_vertex_buffer(1, self.instance_buffer)
         
-        # Draw
+        # Draw all gaussians
         render_pass.draw(6, len(self.gaussians.pos))
         render_pass.end()
         
