@@ -40,15 +40,32 @@ class GameEngine:
     @staticmethod
     def create(config: WindowConfig) -> 'GameEngine':
         """Create initial engine state."""
-        # Create canvas with size and title
-        canvas = WgpuCanvas(size=(config.width, config.height), title=config.title)
+        # Initialize GLFW window with correct parameters
+        if not glfw.init():
+            raise RuntimeError("Could not initialize GLFW")
+            
+        # Set up window parameters with vsync disabled
+        glfw.window_hint(glfw.CLIENT_API, glfw.NO_API)
+        glfw.window_hint(glfw.RESIZABLE, glfw.TRUE)
+        glfw.window_hint(glfw.DOUBLEBUFFER, glfw.TRUE)
+        glfw.swap_interval(0)  # Disable vsync
+        
+        # Create GLFW window
+        window = glfw.create_window(config.width, config.height, config.title, None, None)
+        if not window:
+            glfw.terminate()
+            raise RuntimeError("Could not create window")
+            
+        # Create canvas with existing window
+        canvas = WgpuCanvas(window=window)
+        
         engine = GameEngine(config=config, canvas=canvas)
         
-        # Set up scroll callback using the canvas's window
+        # Set up scroll callback
         def scroll_callback(window, x_offset, y_offset):
             engine.scroll_offset = (x_offset, y_offset)
         
-        glfw.set_scroll_callback(canvas._window, scroll_callback)
+        glfw.set_scroll_callback(window, scroll_callback)
         return engine
 
     def run(self, initial_scene: SceneState) -> None:
@@ -94,7 +111,7 @@ class GameEngine:
             # Render
             scene.render(self.canvas)
             
-            # Request next frame
+            # Request next frame immediately
             self.canvas.request_draw(frame)
         
         # Start the event loop
