@@ -58,7 +58,7 @@ def create_random_gaussians(n_points: int = 10000, spread: float = 500.0) -> Gau
     rng = np.random.default_rng(0)
     return Gaussians(
         pos=rng.normal(0, spread, size=(n_points, 2)),
-        std=np.exp(rng.normal(0, 0.5, size=n_points)) * 20.0,
+        std=np.exp(rng.normal(0, 0.5, size=n_points)) * 2.0,
         intensity=rng.uniform(0.5, 1.0, size=n_points)
     )
 
@@ -148,14 +148,6 @@ class GameState(SceneState):
                 return out;
             }
 
-            @fragment
-            fn fs_main(in: VertexOutput) -> @location(0) vec4f {
-                let sq_dist = dot(in.texcoord, in.texcoord);
-                let value = in.intensity * exp(-0.5 * sq_dist);
-                let color = inferno(clamp(value, 0.0, 1.0));
-                return vec4f(color, value);
-            }
-            
             fn inferno(t: f32) -> vec3f {
                 let c0 = vec3f(0.0002189403691192265, 0.001651004631001012, -0.01948089843709184);
                 let c1 = vec3f(0.1065134194856116, 0.5639564367884091, 3.932712388889277);
@@ -172,6 +164,19 @@ class GameState(SceneState):
                 let t6 = t5 * t;
 
                 return c0 + c1 * t + c2 * t2 + c3 * t3 + c4 * t4 + c5 * t5 + c6 * t6;
+            }
+
+            @fragment
+            fn fs_main(in: VertexOutput) -> @location(0) vec4f {
+                let sq_dist = dot(in.texcoord, in.texcoord);
+                let value = in.intensity * exp(-0.5 * sq_dist);
+                
+                // Scale value so that 5 gaussians at full intensity = 1.0
+                let scaled_value = value / 5.0;
+                
+                // Apply inferno colormap after accumulation (using alpha blending)
+                let color = inferno(scaled_value);
+                return vec4f(color, scaled_value);
             }
             """
         )
@@ -226,13 +231,13 @@ class GameState(SceneState):
                     "format": render_texture_format,
                     "blend": {
                         "color": {
-                            "src_factor": wgpu.BlendFactor.src_alpha,
-                            "dst_factor": wgpu.BlendFactor.one_minus_src_alpha,
+                            "src_factor": wgpu.BlendFactor.one,  # Additive blending
+                            "dst_factor": wgpu.BlendFactor.one,
                             "operation": wgpu.BlendOperation.add,
                         },
                         "alpha": {
                             "src_factor": wgpu.BlendFactor.one,
-                            "dst_factor": wgpu.BlendFactor.one_minus_src_alpha,
+                            "dst_factor": wgpu.BlendFactor.one,
                             "operation": wgpu.BlendOperation.add,
                         }
                     }
