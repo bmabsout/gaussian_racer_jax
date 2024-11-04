@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Protocol, Optional
+from typing import Protocol, Optional, Callable
 import wgpu
 from wgpu.gui.auto import WgpuCanvas, run
 import glfw
@@ -33,39 +33,33 @@ class GameEngine:
     scroll_offset: tuple[float, float] = (0.0, 0.0)
     last_time: float = field(default_factory=time.time)
     frame_count: int = 0
-    fps_update_interval: float = 0.5  # Update FPS every half second
+    fps_update_interval: float = 0.5
     last_fps_update: float = field(default_factory=time.time)
     current_fps: float = 0.0
+    running: bool = True
     
     @staticmethod
     def create(config: WindowConfig) -> 'GameEngine':
         """Create initial engine state."""
-        # Initialize GLFW window with correct parameters
-        if not glfw.init():
-            raise RuntimeError("Could not initialize GLFW")
-            
-        # Set up window parameters with vsync disabled
-        glfw.window_hint(glfw.CLIENT_API, glfw.NO_API)
-        glfw.window_hint(glfw.RESIZABLE, glfw.TRUE)
-        glfw.window_hint(glfw.DOUBLEBUFFER, glfw.TRUE)
-        glfw.swap_interval(0)  # Disable vsync
-        
-        # Create GLFW window
-        window = glfw.create_window(config.width, config.height, config.title, None, None)
-        if not window:
-            glfw.terminate()
-            raise RuntimeError("Could not create window")
-            
-        # Create canvas with existing window
-        canvas = WgpuCanvas(window=window)
+        canvas = WgpuCanvas(
+            size=(config.width, config.height),
+            title=config.title,
+            max_fps=240  # Try to disable frame limiting
+        )
         
         engine = GameEngine(config=config, canvas=canvas)
         
-        # Set up scroll callback
         def scroll_callback(window, x_offset, y_offset):
             engine.scroll_offset = (x_offset, y_offset)
         
-        glfw.set_scroll_callback(window, scroll_callback)
+        glfw.set_scroll_callback(canvas._window, scroll_callback)
+        
+        # Handle window close
+        def close_callback(window):
+            engine.running = False
+        
+        glfw.set_window_close_callback(canvas._window, close_callback)
+        
         return engine
 
     def run(self, initial_scene: SceneState) -> None:
@@ -74,6 +68,10 @@ class GameEngine:
         
         def frame():
             nonlocal scene
+            
+            if not self.running:
+                return
+            
             current_time = time.time()
             
             # Update FPS
@@ -82,7 +80,6 @@ class GameEngine:
                 self.current_fps = self.frame_count / (current_time - self.last_fps_update)
                 self.frame_count = 0
                 self.last_fps_update = current_time
-                # Update window title with FPS
                 glfw.set_window_title(
                     self.canvas._window,
                     f"{self.config.title} - FPS: {self.current_fps:.1f}"
@@ -92,7 +89,7 @@ class GameEngine:
             dt = current_time - self.last_time
             self.last_time = current_time
             
-            # Poll GLFW events
+            # Poll events
             glfw.poll_events()
             
             # Handle events
@@ -111,8 +108,9 @@ class GameEngine:
             # Render
             scene.render(self.canvas)
             
-            # Request next frame immediately
-            self.canvas.request_draw(frame)
+            # Request next frame immediately if still running
+            if self.running:
+                self.canvas.request_draw(frame)
         
         # Start the event loop
         self.canvas.request_draw(frame)
