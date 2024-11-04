@@ -1,74 +1,48 @@
 from dataclasses import dataclass
 from typing import Protocol, Optional
+import wgpu
+from wgpu.gui.auto import WgpuCanvas, run
 import glfw
-import moderngl
 
 @dataclass(frozen=True)
 class WindowConfig:
     width: int
     height: int
-    title: str = "GLFW Window"
+    title: str = "WebGPU Window"
 
 class SceneState(Protocol):
     """Protocol for scene state."""
-    def update(self, dt: float, window: int) -> Optional['SceneState']:
+    def update(self, dt: float) -> Optional['SceneState']:
         """Return new state after update."""
         ...
     
-    def handle_event(self, window: int, scroll_offset: tuple[float, float]) -> Optional['SceneState']:
+    def handle_event(self, scroll_offset: tuple[float, float]) -> Optional['SceneState']:
         """Handle input events and return new state."""
         ...
     
-    def render(self) -> None:
+    def render(self, canvas: WgpuCanvas) -> None:
         """Render current state directly to screen."""
         ...
 
 @dataclass
 class GameEngine:
-    """Functional game engine using GLFW."""
+    """Game engine using WebGPU."""
     config: WindowConfig
-    window: int
-    ctx: moderngl.Context
+    canvas: WgpuCanvas
     scroll_offset: tuple[float, float] = (0.0, 0.0)
     
     @staticmethod
     def create(config: WindowConfig) -> 'GameEngine':
         """Create initial engine state."""
-        if not glfw.init():
-            raise RuntimeError("Could not initialize GLFW")
+        # Create canvas first
+        canvas = WgpuCanvas(size=(config.width, config.height), title=config.title)
+        engine = GameEngine(config=config, canvas=canvas)
         
-        # Request a modern OpenGL context that works across platforms
-        glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 4)
-        glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 1)
-        glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
-        glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, True)
-        
-        # Create window
-        window = glfw.create_window(
-            config.width,
-            config.height,
-            config.title,
-            None,
-            None
-        )
-        
-        if not window:
-            glfw.terminate()
-            raise RuntimeError("Could not create window")
-            
-        glfw.make_context_current(window)
-        
-        # Create ModernGL context
-        ctx = moderngl.create_context()
-        
-        engine = GameEngine(config=config, window=window, ctx=ctx)
-        
-        # Set up scroll callback
+        # Set up scroll callback using the canvas's window
         def scroll_callback(window, x_offset, y_offset):
             engine.scroll_offset = (x_offset, y_offset)
         
-        glfw.set_scroll_callback(window, scroll_callback)
-        
+        glfw.set_scroll_callback(canvas._window, scroll_callback)
         return engine
 
     def run(self, initial_scene: SceneState) -> None:
@@ -76,33 +50,35 @@ class GameEngine:
         scene = initial_scene
         last_time = glfw.get_time()
         
-        while not glfw.window_should_close(self.window):
+        def frame():
+            nonlocal scene, last_time
+            
             current_time = glfw.get_time()
             dt = current_time - last_time
             last_time = current_time
             
-            # Poll events and update scene
+            # Poll GLFW events
             glfw.poll_events()
             
             # Handle events
-            new_scene = scene.handle_event(self.window, self.scroll_offset)
+            new_scene = scene.handle_event(self.scroll_offset)
             if new_scene is not None:
                 scene = new_scene
             
             # Update scene
-            new_scene = scene.update(dt, self.window)
+            new_scene = scene.update(dt)
             if new_scene is not None:
                 scene = new_scene
             
-            # Reset scroll offset after handling events
+            # Reset scroll offset
             self.scroll_offset = (0.0, 0.0)
             
             # Render
-            scene.render()
-            glfw.swap_buffers(self.window)
+            scene.render(self.canvas)
             
-            if dt > 0:
-                fps = 1.0 / dt
-                glfw.set_window_title(self.window, f"{self.config.title} - FPS: {fps:.1f}")
+            # Request next frame
+            self.canvas.request_draw(frame)
         
-        glfw.terminate()
+        # Start the event loop
+        self.canvas.request_draw(frame)
+        run()

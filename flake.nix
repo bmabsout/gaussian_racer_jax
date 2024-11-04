@@ -28,20 +28,28 @@
                 inherit system config;
               };
               python = pkgs.python311.override {};
+              python-with-packages = python.withPackages (p: with p; [
+                numpy
+                matplotlib
+                moderngl
+                glfw
+                pip
+              ]);
+              
           in pkgs.mkShell {
-              buildInputs = [
-                  pkgs.cudaPackages.cudatoolkit
-                  (python.withPackages (p: with p; [
-                    numpy
-                    matplotlib
-                    pip
-                  ]))
-                  pkgs.vulkan-loader
-                  pkgs.vulkan-headers
-              ];
-              shellHook = ''
-                export PYTHONPATH=$PYTHONPATH:$(pwd)
-                pip install wgpu
+                buildInputs = [
+                    pkgs.cudaPackages.cudatoolkit
+                    python-with-packages
+                    pkgs.vulkan-loader
+                    pkgs.vulkan-headers
+                ];
+                shellHook = ''
+                  python -m venv .venv --system-site-packages
+                  source .venv/bin/activate
+                  ln -s ${python-with-packages}/${python-with-packages.sitePackages}/* .venv/${python-with-packages.sitePackages}/
+                  export LD_LIBRARY_PATH=${pkgs.vulkan-loader}/lib:${pkgs.glfw}/lib:$LD_LIBRARY_PATH
+                  export PYTHONPATH=$(pwd):$PYTHONPATH
+                  pip install wgpu
               '';
             }
         ) nixpkgs_configs
