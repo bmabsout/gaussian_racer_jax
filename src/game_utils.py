@@ -1,8 +1,9 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, Optional
 import wgpu
 from wgpu.gui.auto import WgpuCanvas, run
 import glfw
+import time
 
 @dataclass(frozen=True)
 class WindowConfig:
@@ -30,6 +31,11 @@ class GameEngine:
     config: WindowConfig
     canvas: WgpuCanvas
     scroll_offset: tuple[float, float] = (0.0, 0.0)
+    last_time: float = field(default_factory=time.time)
+    frame_count: int = 0
+    fps_update_interval: float = 0.5  # Update FPS every half second
+    last_fps_update: float = field(default_factory=time.time)
+    current_fps: float = 0.0
     
     @staticmethod
     def create(config: WindowConfig) -> 'GameEngine':
@@ -48,14 +54,26 @@ class GameEngine:
     def run(self, initial_scene: SceneState) -> None:
         """Run the game loop."""
         scene = initial_scene
-        last_time = glfw.get_time()
         
         def frame():
-            nonlocal scene, last_time
+            nonlocal scene
+            current_time = time.time()
             
-            current_time = glfw.get_time()
-            dt = current_time - last_time
-            last_time = current_time
+            # Update FPS
+            self.frame_count += 1
+            if current_time - self.last_fps_update >= self.fps_update_interval:
+                self.current_fps = self.frame_count / (current_time - self.last_fps_update)
+                self.frame_count = 0
+                self.last_fps_update = current_time
+                # Update window title with FPS
+                glfw.set_window_title(
+                    self.canvas._window,
+                    f"{self.config.title} - FPS: {self.current_fps:.1f}"
+                )
+            
+            # Calculate delta time
+            dt = current_time - self.last_time
+            self.last_time = current_time
             
             # Poll GLFW events
             glfw.poll_events()

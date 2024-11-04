@@ -13,7 +13,7 @@ class Gaussians(NamedTuple):
     std: np.ndarray    # shape: (n,)
     intensity: np.ndarray  # shape: (n,)
 
-def create_random_gaussians(n_points: int = 10000, spread: float = 500.0) -> Gaussians:
+def create_random_gaussians(n_points: int = 100000, spread: float = 500.0) -> Gaussians:
     """Create random gaussian points in world space."""
     rng = np.random.default_rng(0)
     return Gaussians(
@@ -195,14 +195,14 @@ class GameState(SceneState):
         # Create vertex buffer with 6 vertices for 2 triangles
         vertices = np.array([
             # First triangle
-            -4.0, -4.0,  -4.0, -4.0,  # pos, texcoord for vertex 0
-             4.0, -4.0,   4.0, -4.0,  # pos, texcoord for vertex 1
-             4.0,  4.0,   4.0,  4.0,  # pos, texcoord for vertex 2
+            -1.0, -1.0,  -1.0, -1.0,  # pos, texcoord for vertex 0
+             1.0, -1.0,   1.0, -1.0,  # pos, texcoord for vertex 1
+             1.0,  1.0,   1.0,  1.0,  # pos, texcoord for vertex 2
             # Second triangle
-            -4.0, -4.0,  -4.0, -4.0,  # pos, texcoord for vertex 0 again
-             4.0,  4.0,   4.0,  4.0,  # pos, texcoord for vertex 2 again
-            -4.0,  4.0,  -4.0,  4.0,  # pos, texcoord for vertex 3
-        ], dtype=np.float32)
+            -1.0, -1.0,  -1.0, -1.0,  # pos, texcoord for vertex 0 again
+             1.0,  1.0,   1.0,  1.0,  # pos, texcoord for vertex 2 again
+            -1.0,  1.0,  -1.0,  1.0,  # pos, texcoord for vertex 3
+        ], dtype=np.float32)*4.0
         
         vertex_buffer = device.create_buffer_with_data(
             data=vertices,
@@ -240,7 +240,7 @@ class GameState(SceneState):
         )
         
         return GameState(
-            view=ViewTransform.create(width, height),
+            view=ViewTransform.create(width, height, canvas),
             gaussians=gaussians,
             device=device,
             pipeline=pipeline,
@@ -256,7 +256,11 @@ class GameState(SceneState):
 
     def handle_event(self, scroll_offset: tuple[float, float]) -> Optional['GameState']:
         """Handle input events."""
-        new_view = self.view.handle_event(scroll_offset)
+        # Get mouse state
+        mouse_pos = glfw.get_cursor_pos(self.view.canvas._window)
+        mouse_pressed = glfw.get_mouse_button(self.view.canvas._window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS
+        
+        new_view = self.view.handle_event(scroll_offset, mouse_pos, mouse_pressed)
         if new_view is not None:
             return replace(self, view=new_view)
         return None
