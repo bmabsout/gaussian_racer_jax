@@ -38,7 +38,7 @@
               
           in pkgs.mkShell {
                 buildInputs = [
-                    pkgs.cudaPackages.cudatoolkit
+                    # pkgs.cudaPackages.cudatoolkit
                     python-with-packages
                     pkgs.vulkan-loader
                     pkgs.vulkan-headers
