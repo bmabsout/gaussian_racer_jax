@@ -109,8 +109,8 @@
             pythonWithPackages
           ] ++ (mkRuntimeInputs pkgs);
           text = ''
-            export PYTHONPATH=${./.}:$PYTHONPATH
-            export LD_LIBRARY_PATH=${pkgs.vulkan-loader}/lib:$LD_LIBRARY_PATH  # Add LD_LIBRARY_PATH
+            export PYTHONPATH=${./.}
+            export LD_LIBRARY_PATH=${pkgs.vulkan-loader}/lib
             python ${./src/gaussian_game.py}
           '';
         };
