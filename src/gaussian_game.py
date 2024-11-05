@@ -60,7 +60,7 @@ class GameState(SceneState):
         )
 
         return GameState(
-            view=ViewTransform.create(width, height),
+            view=ViewTransform.create(width, height, canvas._window),
             gaussians=gaussians,
             device=device,
             accumulation_pipeline=accumulation_pipeline,

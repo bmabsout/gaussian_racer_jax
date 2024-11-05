@@ -1,9 +1,10 @@
 from dataclasses import dataclass, replace
 import numpy as np
 from typing import NamedTuple, Optional
+import glfw
 
 class Rectangle(NamedTuple):
-    center: np.ndarray
+    center: np.ndarray  # (x, y) in respective space
     width: float
     height: float
     
@@ -29,7 +30,7 @@ class ViewTransform:
     last_drag_pos: Optional[np.ndarray] = None
     
     @staticmethod
-    def create(width: int, height: int, initial_scale: float = 2.0) -> 'ViewTransform':
+    def create(width: int, height: int, window: int, initial_scale: float = 2.0) -> 'ViewTransform':
         screen_rect = Rectangle(
             center=np.array([width/2, height/2]),
             width=width,
@@ -73,17 +74,17 @@ class ViewTransform:
         return None
     
     def handle_resize(self, width: int, height: int) -> 'ViewTransform':
-        old_size = np.array([self.screen_rect.width, self.screen_rect.height])
-        scale_x = width / old_size[0]
-        scale_y = height / old_size[1]
+        """Update view based on new window size."""
+        scale_x = width / self.screen_rect.width
+        scale_y = height / self.screen_rect.height
         
         new_screen_rect = Rectangle(
             center=np.array([width/2, height/2]),
             width=width,
             height=height
         )
-        new_world_rect = self.world_rect.resize(scale_x, scale_y)
         
+        new_world_rect = self.world_rect.resize(scale_x, scale_y)
         return replace(self, screen_rect=new_screen_rect, world_rect=new_world_rect)
     
     def _zoom(self, factor: float) -> 'ViewTransform':
@@ -96,11 +97,12 @@ class ViewTransform:
     
     def _move_by_screen_delta(self, screen_delta: np.ndarray) -> 'ViewTransform':
         scale = np.array([self.world_rect.width/self.screen_rect.width,
-                         self.world_rect.height/self.screen_rect.height])
-        world_delta = screen_delta * scale * np.array([1.0, -1.0])  # Flip y
+                         -self.world_rect.height/self.screen_rect.height])  # Flip y
+        world_delta = screen_delta * scale
         
+        # Move world rect in opposite direction to drag
         new_world_rect = Rectangle(
-            center=self.world_rect.center - world_delta,
+            center=self.world_rect.center - world_delta,  # Changed from + to -
             width=self.world_rect.width,
             height=self.world_rect.height
         )

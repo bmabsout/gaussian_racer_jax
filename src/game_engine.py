@@ -40,27 +40,35 @@ class GameEngine:
     
     @staticmethod
     def create(config: WindowConfig) -> 'GameEngine':
+        print("Creating canvas...")
         canvas = WgpuCanvas(
             size=(config.width, config.height),
             title=config.title,
             max_fps=240
         )
+        print("Canvas created")
         
-        # Create device
+        print("Requesting adapter...")
         adapter = wgpu.gpu.request_adapter_sync(
             canvas=canvas,
             power_preference="high-performance"
         )
-        device = adapter.request_device_sync()
+        print(f"Got adapter: {adapter}")
         
-        # Initial context configuration
+        print("Requesting device...")
+        device = adapter.request_device_sync()
+        print(f"Got device: {device}")
+        
+        print("Getting context...")
         context = canvas.get_context()
+        print("Configuring context...")
         context.configure(
             device=device,
             format=context.get_preferred_format(adapter),
             alpha_mode="opaque",
             view_formats=[]
         )
+        print("Context configured")
         
         engine = GameEngine(
             config=config,
