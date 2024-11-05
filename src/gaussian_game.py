@@ -12,7 +12,7 @@ class Gaussians(NamedTuple):
     std: np.ndarray      # shape: (n,)
     intensity: np.ndarray # shape: (n,)
 
-def create_random_gaussians(n_points: int = 100000, spread: float = 500.0) -> Gaussians:
+def create_random_gaussians(n_points: int = 1000000, spread: float = 5000.0) -> Gaussians:
     rng = np.random.default_rng(0)
     return Gaussians(
         pos=rng.normal(0, spread, size=(n_points, 2)),
