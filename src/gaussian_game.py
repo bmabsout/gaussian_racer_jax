@@ -96,6 +96,18 @@ class GameState(SceneState):
         return None
 
     def render(self, canvas: WgpuCanvas) -> None:
+        # Handle resize and update mouse position
+        width, height = glfw.get_window_size(canvas._window)
+        if (width, height) != (self.view.screen_rect.width, self.view.screen_rect.height):
+            new_view = self.view.handle_resize(width, height)
+            # Update mouse position with new view
+            if self.mouse_pos is not None:
+                mouse_screen_pos = np.array(glfw.get_cursor_pos(canvas._window))
+                mouse_world_pos = new_view.screen_to_world(mouse_screen_pos)
+                self = replace(self, view=new_view, mouse_pos=mouse_world_pos)
+            else:
+                self = replace(self, view=new_view)
+        
         try:
             current_texture = canvas.get_context().get_current_texture()
         except RuntimeError as e:
