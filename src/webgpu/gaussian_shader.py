@@ -41,9 +41,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4f {
+fn fs_main(in: VertexOutput) -> @location(0) f32 {
     let sq_dist = dot(in.texcoord, in.texcoord);
-    let value = in.intensity * exp(-0.5 * sq_dist);
-    return vec4f(value, value, value, 1.0);
+    return in.intensity * exp(-0.5 * sq_dist);
 }
 '''

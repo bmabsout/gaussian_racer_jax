@@ -4,6 +4,7 @@ import wgpu
 from wgpu.gui.auto import WgpuCanvas, run
 import glfw
 import time
+import os
 
 @dataclass(frozen=True)
 class WindowConfig:
@@ -40,35 +41,28 @@ class GameEngine:
     
     @staticmethod
     def create(config: WindowConfig) -> 'GameEngine':
-        print("Creating canvas...")
+        # Force X11 before anything else
+        os.environ["DISPLAY"] = ":0"
+        os.environ["XDG_SESSION_TYPE"] = "x11"
+        if "WAYLAND_DISPLAY" in os.environ:
+            del os.environ["WAYLAND_DISPLAY"]
+        
+        # Initialize GLFW
+        if not glfw.init():
+            raise RuntimeError("Could not initialize GLFW")
+        
+        # Create canvas
         canvas = WgpuCanvas(
             size=(config.width, config.height),
             title=config.title,
             max_fps=240
         )
-        print("Canvas created")
         
-        print("Requesting adapter...")
+        # Get adapter and device
         adapter = wgpu.gpu.request_adapter_sync(
-            canvas=canvas,
             power_preference="high-performance"
         )
-        print(f"Got adapter: {adapter}")
-        
-        print("Requesting device...")
         device = adapter.request_device_sync()
-        print(f"Got device: {device}")
-        
-        print("Getting context...")
-        context = canvas.get_context()
-        print("Configuring context...")
-        context.configure(
-            device=device,
-            format=context.get_preferred_format(adapter),
-            alpha_mode="opaque",
-            view_formats=[]
-        )
-        print("Context configured")
         
         engine = GameEngine(
             config=config,

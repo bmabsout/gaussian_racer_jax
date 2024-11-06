@@ -86,7 +86,10 @@
 
       # Shared runtime environment
       mkRuntimeInputs = pkgs: with pkgs; [
-        vulkan-loader  # Add vulkan-loader explicitly to runtime
+        vulkan-loader
+        wayland
+        libxkbcommon
+        libdecor
       ] ++ (lib.optionals pkgs.stdenv.isDarwin (with darwin.apple_sdk.frameworks; [
         Cocoa
         Metal

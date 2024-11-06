@@ -24,13 +24,13 @@ def transform(point: np.ndarray, from_rect: Rectangle, to_rect: Rectangle) -> np
 
 @dataclass(frozen=True)
 class ViewTransform:
-    screen_rect: Rectangle  # Screen space rectangle
-    world_rect: Rectangle   # World space rectangle
+    screen_rect: Rectangle
+    world_rect: Rectangle
     dragging: bool = False
     last_drag_pos: Optional[np.ndarray] = None
     
     @staticmethod
-    def create(width: int, height: int, window: int, initial_scale: float = 2.0) -> 'ViewTransform':
+    def create(width: int, height: int) -> 'ViewTransform':
         screen_rect = Rectangle(
             center=np.array([width/2, height/2]),
             width=width,
@@ -38,8 +38,8 @@ class ViewTransform:
         )
         world_rect = Rectangle(
             center=np.zeros(2),
-            width=width * initial_scale,
-            height=height * initial_scale
+            width=width * 2.0,
+            height=height * 2.0
         )
         return ViewTransform(screen_rect=screen_rect, world_rect=world_rect)
     
@@ -74,17 +74,17 @@ class ViewTransform:
         return None
     
     def handle_resize(self, width: int, height: int) -> 'ViewTransform':
-        """Update view based on new window size."""
-        scale_x = width / self.screen_rect.width
-        scale_y = height / self.screen_rect.height
+        old_size = np.array([self.screen_rect.width, self.screen_rect.height])
+        scale_x = width / old_size[0]
+        scale_y = height / old_size[1]
         
         new_screen_rect = Rectangle(
             center=np.array([width/2, height/2]),
             width=width,
             height=height
         )
-        
         new_world_rect = self.world_rect.resize(scale_x, scale_y)
+        
         return replace(self, screen_rect=new_screen_rect, world_rect=new_world_rect)
     
     def _zoom(self, factor: float) -> 'ViewTransform':

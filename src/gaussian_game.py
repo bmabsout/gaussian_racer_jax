@@ -26,21 +26,14 @@ class GameState(SceneState):
     mouse_pos: Optional[np.ndarray] = None
 
     @staticmethod
-    def create(width: int, height: int, canvas: WgpuCanvas) -> 'GameState':
-        adapter = wgpu.gpu.request_adapter_sync(
-            canvas=canvas,
-            power_preference="high-performance"
-        )
-        device = adapter.request_device_sync()
-        
+    def create(width: int, height: int, canvas: WgpuCanvas, device: wgpu.GPUDevice) -> 'GameState':
         # Configure canvas
         context = canvas.get_context()
-        format = context.get_preferred_format(adapter)
+        format = context.get_preferred_format(device.adapter)
         context.configure(
             device=device,
             format=format,
             alpha_mode="opaque",
-            view_formats=[]
         )
         
         # Create gaussians
@@ -60,7 +53,7 @@ class GameState(SceneState):
         )
 
         return GameState(
-            view=ViewTransform.create(width, height, canvas._window),
+            view=ViewTransform.create(width, height),
             gaussians=gaussians,
             device=device,
             accumulation_pipeline=accumulation_pipeline,
@@ -103,31 +96,43 @@ class GameState(SceneState):
         return None
 
     def render(self, canvas: WgpuCanvas) -> None:
-        width, height = glfw.get_window_size(canvas._window)
-        
-        # Update view transform if size changed
-        if (width, height) != (self.view.screen_rect.width, self.view.screen_rect.height):
-            new_view = self.view.handle_resize(width, height)
-            # Update mouse position with new view
-            if self.mouse_pos is not None:
-                mouse_screen_pos = np.array(glfw.get_cursor_pos(canvas._window))
-                mouse_world_pos = new_view.screen_to_world(mouse_screen_pos)
-                self = replace(self, view=new_view, mouse_pos=mouse_world_pos)
-            else:
-                self = replace(self, view=new_view)
-        
         try:
             current_texture = canvas.get_context().get_current_texture()
         except RuntimeError as e:
             if "Cannot get surface texture (2)" in str(e):
-                # Skip frame during resize
                 return
-            # Re-raise other errors
             raise
             
-        texture_width = current_texture.width
-        texture_height = current_texture.height
+        # Create intermediate texture for accumulation
+        width, height = current_texture.width, current_texture.height
+        accumulation_texture = self.device.create_texture(
+            size={"width": width, "height": height, "depth_or_array_layers": 1},
+            format=wgpu.TextureFormat.r16float,
+            usage=wgpu.TextureUsage.RENDER_ATTACHMENT | wgpu.TextureUsage.TEXTURE_BINDING
+        )
         
+        # Create sampler for colormap pass
+        sampler = self.device.create_sampler(
+            min_filter="linear",
+            mag_filter="linear",
+            mipmap_filter="linear",
+        )
+        
+        # Create bind group for colormap pass
+        colormap_bind_group = self.device.create_bind_group(
+            layout=self.colormap_bind_group_layout,
+            entries=[
+                {
+                    "binding": 0,
+                    "resource": accumulation_texture.create_view()
+                },
+                {
+                    "binding": 1,
+                    "resource": sampler
+                }
+            ]
+        )
+            
         # Update instance data with mouse gaussian
         instance_data = np.zeros(len(self.gaussians.pos) + 1, dtype=np.dtype([
             ('pos', np.float32, 2),
@@ -153,39 +158,10 @@ class GameState(SceneState):
         ], dtype=np.float32)
         self.device.queue.write_buffer(self.view_uniform_buffer, 0, view_data.tobytes())
         
-        # Create accumulation texture
-        accumulation_texture = self.device.create_texture(
-            size={"width": texture_width, "height": texture_height, "depth_or_array_layers": 1},
-            format=wgpu.TextureFormat.rgba16float,
-            usage=wgpu.TextureUsage.RENDER_ATTACHMENT | wgpu.TextureUsage.TEXTURE_BINDING
-        )
-        
-        # Create sampler for colormap pass
-        sampler = self.device.create_sampler(
-            min_filter="linear",
-            mag_filter="linear",
-            mipmap_filter="linear",
-        )
-        
-        # Create bind group for colormap pass
-        colormap_bind_group = self.device.create_bind_group(
-            layout=self.colormap_bind_group_layout,
-            entries=[
-                {
-                    "binding": 0,
-                    "resource": accumulation_texture.create_view()
-                },
-                {
-                    "binding": 1,
-                    "resource": sampler
-                }
-            ]
-        )
-        
         command_encoder = self.device.create_command_encoder()
         
-        # First pass: accumulate gaussians
-        accumulation_pass = command_encoder.begin_render_pass(
+        # First pass: accumulate gaussians to intermediate texture
+        render_pass = command_encoder.begin_render_pass(
             color_attachments=[{
                 "view": accumulation_texture.create_view(),
                 "clear_value": (0.0, 0.0, 0.0, 1.0),
@@ -194,16 +170,15 @@ class GameState(SceneState):
             }]
         )
         
-        accumulation_pass.set_viewport(0, 0, texture_width, texture_height, 0.0, 1.0)
-        accumulation_pass.set_pipeline(self.accumulation_pipeline)
-        accumulation_pass.set_bind_group(0, self.bind_group)
-        accumulation_pass.set_vertex_buffer(0, self.gaussian_vertex_buffer)
-        accumulation_pass.set_vertex_buffer(1, self.instance_buffer)
-        accumulation_pass.draw(6, len(instance_data))
-        accumulation_pass.end()
+        render_pass.set_pipeline(self.accumulation_pipeline)
+        render_pass.set_bind_group(0, self.bind_group)
+        render_pass.set_vertex_buffer(0, self.gaussian_vertex_buffer)
+        render_pass.set_vertex_buffer(1, self.instance_buffer)
+        render_pass.draw(6, len(instance_data))
+        render_pass.end()
         
-        # Second pass: apply colormap
-        colormap_pass = command_encoder.begin_render_pass(
+        # Second pass: apply colormap to final texture
+        render_pass = command_encoder.begin_render_pass(
             color_attachments=[{
                 "view": current_texture.create_view(),
                 "clear_value": (0.0, 0.0, 0.0, 1.0),
@@ -212,12 +187,11 @@ class GameState(SceneState):
             }]
         )
         
-        colormap_pass.set_viewport(0, 0, texture_width, texture_height, 0.0, 1.0)
-        colormap_pass.set_pipeline(self.colormap_pipeline)
-        colormap_pass.set_bind_group(0, colormap_bind_group)
-        colormap_pass.set_vertex_buffer(0, self.fullscreen_vertex_buffer)
-        colormap_pass.draw(3, 1)
-        colormap_pass.end()
+        render_pass.set_pipeline(self.colormap_pipeline)
+        render_pass.set_bind_group(0, colormap_bind_group)
+        render_pass.set_vertex_buffer(0, self.fullscreen_vertex_buffer)
+        render_pass.draw(3, 1)
+        render_pass.end()
         
         self.device.queue.submit([command_encoder.finish()])
 
@@ -231,5 +205,5 @@ if __name__ == "__main__":
     )
     
     engine = GameEngine.create(config)
-    game_state = GameState.create(config.width, config.height, engine.canvas)
+    game_state = GameState.create(config.width, config.height, engine.canvas, engine.device)
     engine.run(game_state)

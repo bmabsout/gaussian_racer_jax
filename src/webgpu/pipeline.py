@@ -43,7 +43,7 @@ def create_pipelines(device: wgpu.GPUDevice, surface_format: wgpu.TextureFormat)
         ]
     )
     
-    # Create pipelines
+    # Create accumulation pipeline (renders to r16float texture)
     accumulation_pipeline = device.create_render_pipeline(
         label="accumulation_pipeline",
         layout=device.create_pipeline_layout(
@@ -57,7 +57,7 @@ def create_pipelines(device: wgpu.GPUDevice, surface_format: wgpu.TextureFormat)
                     "array_stride": 16,
                     "attributes": [
                         {"format": wgpu.VertexFormat.float32x2, "offset": 0, "shader_location": 0},
-                        {"format": wgpu.VertexFormat.float32x2, "offset": 8, "shader_location": 1},
+                        {"format": wgpu.VertexFormat.float32x2, "offset": 8, "shader_location": 1}
                     ]
                 },
                 {  # Instance buffer
@@ -66,7 +66,7 @@ def create_pipelines(device: wgpu.GPUDevice, surface_format: wgpu.TextureFormat)
                     "attributes": [
                         {"format": wgpu.VertexFormat.float32x2, "offset": 0, "shader_location": 2},
                         {"format": wgpu.VertexFormat.float32, "offset": 8, "shader_location": 3},
-                        {"format": wgpu.VertexFormat.float32, "offset": 12, "shader_location": 4},
+                        {"format": wgpu.VertexFormat.float32, "offset": 12, "shader_location": 4}
                     ]
                 }
             ]
@@ -75,17 +75,17 @@ def create_pipelines(device: wgpu.GPUDevice, surface_format: wgpu.TextureFormat)
             "module": accumulation_shader,
             "entry_point": "fs_main",
             "targets": [{
-                "format": wgpu.TextureFormat.rgba16float,
+                "format": wgpu.TextureFormat.r16float,  # Single 16-bit float for height
                 "blend": {
                     "color": {
                         "src_factor": wgpu.BlendFactor.one,
                         "dst_factor": wgpu.BlendFactor.one,
-                        "operation": wgpu.BlendOperation.add,
+                        "operation": wgpu.BlendOperation.add
                     },
                     "alpha": {
                         "src_factor": wgpu.BlendFactor.one,
                         "dst_factor": wgpu.BlendFactor.one,
-                        "operation": wgpu.BlendOperation.add,
+                        "operation": wgpu.BlendOperation.add
                     }
                 }
             }]
@@ -97,6 +97,7 @@ def create_pipelines(device: wgpu.GPUDevice, surface_format: wgpu.TextureFormat)
         }
     )
     
+    # Create colormap pipeline (renders to surface format)
     colormap_pipeline = device.create_render_pipeline(
         label="colormap_pipeline",
         layout=device.create_pipeline_layout(
@@ -109,7 +110,7 @@ def create_pipelines(device: wgpu.GPUDevice, surface_format: wgpu.TextureFormat)
                 "array_stride": 16,
                 "attributes": [
                     {"format": wgpu.VertexFormat.float32x2, "offset": 0, "shader_location": 0},
-                    {"format": wgpu.VertexFormat.float32x2, "offset": 8, "shader_location": 1},
+                    {"format": wgpu.VertexFormat.float32x2, "offset": 8, "shader_location": 1}
                 ]
             }]
         },
