@@ -55,7 +55,7 @@
               typing-extensions
               glfw
               vulkan-loader
-            ];
+            ] ++ (lib.optionals stdenv.isDarwin [rubicon-objc]);
 
             buildInputs = with pkgs; [
               vulkan-headers
@@ -63,7 +63,6 @@
               fontconfig
               glfw
             ] ++ (lib.optionals stdenv.isDarwin (with darwin.apple_sdk.frameworks; [
-              rubicon-objc
               CoreServices
               QuartzCore
               AppKit
