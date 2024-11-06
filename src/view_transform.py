@@ -30,7 +30,7 @@ class ViewTransform:
     last_drag_pos: Optional[np.ndarray] = None
     
     @staticmethod
-    def create(width: int, height: int, window: int, initial_scale: float = 2.0) -> 'ViewTransform':
+    def create(width: int, height: int, initial_scale: float = 2.0) -> 'ViewTransform':
         screen_rect = Rectangle(
             center=np.array([width/2, height/2]),
             width=width,
