@@ -5,6 +5,7 @@ from wgpu.gui.auto import WgpuCanvas, run
 import glfw
 import time
 import os
+import platform
 
 @dataclass(frozen=True)
 class WindowConfig:
@@ -41,11 +42,14 @@ class GameEngine:
     
     @staticmethod
     def create(config: WindowConfig) -> 'GameEngine':
-        # Force X11 before anything else
-        os.environ["DISPLAY"] = ":0"
-        os.environ["XDG_SESSION_TYPE"] = "x11"
-        if "WAYLAND_DISPLAY" in os.environ:
-            del os.environ["WAYLAND_DISPLAY"]
+        # Platform-specific initialization
+        if platform.system() == "Linux":
+            # Force X11 on Linux/Wayland
+            os.environ["DISPLAY"] = ":0"
+            os.environ["XDG_SESSION_TYPE"] = "x11"
+            if "WAYLAND_DISPLAY" in os.environ:
+                del os.environ["WAYLAND_DISPLAY"]
+        # macOS doesn't need special handling
         
         # Initialize GLFW
         if not glfw.init():
