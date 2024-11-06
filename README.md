@@ -1,48 +1,54 @@
-# Gaussian Renderer
+# Gaussian Racer
 
-A JAX-based project for rendering 2D Gaussians with interactive visualization.
-
-![Gaussian Renderer Demo](gaussians.png)
-
-## Overview
-
-This project implements two different methods for rendering 2D Gaussian distributions:
-
-1. **Simple Gaussian Renderer**: A direct computation approach that calculates the full Gaussian function for each point. This provides a mathematically precise but computationally intensive implementation.
-
-2. **Fast Gaussian Renderer**: An optimized approach using splatting and blur passes, capable of handling many more Gaussians efficiently.
+A WebGPU-based real-time 2D gaussian mixture renderer written in Python.
 
 ## Features
-
-- Real-time interactive rendering
-- Mouse-based camera navigation (pan and zoom)
-- Inferno colormap visualization
-- Hardware-accelerated computation using JAX
-- Resizable window support
-- FPS display
-
-## Requirements
-
-- Python 3.8+
-- JAX
-- NumPy
-- Pygame
-- Matplotlib (for colormap)
+- Real-time rendering of 2D gaussian mixtures
+- Interactive camera controls with dynamic gaussian under cursor
+- Cross-platform support (Linux, macOS)
+- Hardware-accelerated rendering using WebGPU
+- Two-pass rendering with colormap visualization
+- Smooth blending of overlapping gaussians
 
 ## Installation
 
-### Using Nix:
-```
-nix develop .#with_cuda
-```
-
-### Using conda:
-```
-conda env create -f environment.yml
-conda activate gaussian-renderer
+Install Nix using the Determinate Systems installer:
+```bash
+curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
 ```
 
-## Running
+## Quick Start
+```bash
+# Run directly from GitHub
+nix run github:bmabsout/gaussian_racer_jax/webgpu
+
+# Or clone and run locally
+git clone https://github.com/bmabsout/gaussian_racer_jax
+cd gaussian_racer_jax
+nix run
+
+# Development shell
+nix develop
 ```
-python src/simple_gaussian_renderer.py
+
+## Controls
+- Mouse drag: Pan camera
+- Mouse wheel: Zoom in/out
+- Mouse cursor: Interactive gaussian component
+
+## Architecture
+- WebGPU for GPU-accelerated rendering
+- GLFW for window management
+- Two-pass rendering pipeline:
+  1. Gaussian accumulation with additive blending
+  2. Colormap visualization for height field
+- Platform-agnostic design (Vulkan on Linux, Metal on macOS)
+
+## Development
+After entering the development shell:
+```bash
+python src/gaussian_game.py
 ```
+
+## License
+[MIT License](LICENSE)
