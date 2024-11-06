@@ -63,6 +63,7 @@
               fontconfig
               glfw
             ] ++ (lib.optionals stdenv.isDarwin (with darwin.apple_sdk.frameworks; [
+              rubicon-objc
               CoreServices
               QuartzCore
               AppKit
@@ -89,7 +90,7 @@
         vulkan-loader
         wayland
         libxkbcommon
-        libdecor
+        # libdecor
       ] ++ (lib.optionals pkgs.stdenv.isDarwin (with darwin.apple_sdk.frameworks; [
         Cocoa
         Metal
