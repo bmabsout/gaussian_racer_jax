@@ -52,23 +52,16 @@
             propagatedBuildInputs = with pkgs; [
               cffi
               numpy
-              typing-extensions
               glfw
-              vulkan-loader
-            ] ++ (lib.optionals stdenv.isDarwin [rubicon-objc]);
+              (if stdenv.isDarwin then rubicon-objc else vulkan-loader)
+            ];
 
             buildInputs = with pkgs; [
-              vulkan-headers
               freetype
+              (if !stdenv.isDarwin then vulkan-headers else null)
               fontconfig
               glfw
-            ] ++ (lib.optionals stdenv.isDarwin (with darwin.apple_sdk.frameworks; [
-              CoreServices
-              QuartzCore
-              AppKit
-              Metal
-              MetalKit
-            ]));
+            ];
 
             doCheck = false;
           };
@@ -84,21 +77,6 @@
         wgpu
       ]);
 
-      # Shared runtime environment
-      mkRuntimeInputs = pkgs: with pkgs; [
-        vulkan-loader
-        wayland
-        libxkbcommon
-        # libdecor
-      ] ++ (lib.optionals pkgs.stdenv.isDarwin (with darwin.apple_sdk.frameworks; [
-        Cocoa
-        Metal
-        MetalKit
-        QuartzCore
-        CoreServices
-        AppKit
-      ]));
-
     in
     {
       packages = forAllSystems (system: let
@@ -108,13 +86,10 @@
       in {
         default = pkgs.writeShellApplication {
           name = "gaussian-racer";
-          runtimeInputs = [
-            pythonWithPackages
-          ] ++ (mkRuntimeInputs pkgs);
           text = ''
             export PYTHONPATH=${./.}
             export LD_LIBRARY_PATH=${pkgs.vulkan-loader}/lib
-            python ${./src/gaussian_game.py}
+            ${pythonWithPackages}/bin/python ${./src/gaussian_game.py}
           '';
         };
       });
@@ -137,7 +112,7 @@
           in pkgs.mkShell {
               buildInputs = [
                 pythonWithPackages
-              ] ++ (mkRuntimeInputs pkgs);
+              ];
               shellHook = ''
                 export PYTHONPATH=$(pwd):$PYTHONPATH
                 export LD_LIBRARY_PATH=${pkgs.vulkan-loader}/lib:$LD_LIBRARY_PATH  # Add LD_LIBRARY_PATH
