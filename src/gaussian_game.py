@@ -4,6 +4,7 @@ import numpy as np
 import wgpu
 from wgpu.gui.auto import WgpuCanvas
 import glfw
+import time
 
 from src.game_engine import SceneState, WindowConfig, GameEngine
 from src.view_transform import ViewTransform
@@ -24,6 +25,7 @@ class GameState(SceneState):
     view_uniform_buffer: wgpu.GPUBuffer
     colormap_bind_group_layout: wgpu.GPUBindGroupLayout
     mouse_pos: Optional[np.ndarray] = None
+    last_placed_pos: Optional[np.ndarray] = None  # Track last placed gaussian position
 
     @staticmethod
     def create(width: int, height: int, canvas: WgpuCanvas, device: wgpu.GPUDevice) -> 'GameState':
@@ -64,38 +66,76 @@ class GameState(SceneState):
             instance_buffer=instance_buffer,
             view_uniform_buffer=view_uniform_buffer,
             colormap_bind_group_layout=colormap_bind_group_layout,
-            mouse_pos=None
+            mouse_pos=None,
+            last_placed_pos=None  # Initialize last placed position
         )
 
-    def update(self, dt: float, window: int) -> Optional['GameState']:
-        """Update game state."""
+    def handle_event(self, window: int, scroll_offset: tuple[float, float]) -> Optional['GameState']:
+        # Handle resize first
+        width, height = glfw.get_window_size(window)
+        if (width, height) != (self.view.screen_rect.width, self.view.screen_rect.height):
+            new_view = self.view.handle_resize(width, height)
+            # Update mouse position with new view
+            if self.mouse_pos is not None:
+                mouse_screen_pos = np.array(glfw.get_cursor_pos(window))
+                mouse_world_pos = new_view.screen_to_world(mouse_screen_pos)
+                return replace(self, view=new_view, mouse_pos=mouse_world_pos)
+            return replace(self, view=new_view)
+
+        # Get mouse position and shift state
         mouse_screen_pos = np.array(glfw.get_cursor_pos(window))
         mouse_world_pos = self.view.screen_to_world(mouse_screen_pos)
-        
-        if not np.array_equal(mouse_world_pos, self.mouse_pos):
-            return replace(self, mouse_pos=mouse_world_pos)
-        return None
+        left_pressed = glfw.get_mouse_button(window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS
+        shift_pressed = glfw.get_key(window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS or \
+                       glfw.get_key(window, glfw.KEY_RIGHT_SHIFT) == glfw.PRESS
 
-    def handle_event(self, window: int, scroll_offset: tuple[float, float]) -> Optional['GameState']:
-        """Handle input events."""
-        mouse_pos = glfw.get_cursor_pos(window)
-        mouse_pressed = glfw.get_mouse_button(window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS
-        
-        # Update view if needed
-        new_view = self.view.handle_event(scroll_offset, mouse_pos, mouse_pressed)
+        # Add gaussian when shift is pressed and moved enough
+        std = 20.0
+        if shift_pressed:
+            should_place = False
+            if self.last_placed_pos is None:
+                should_place = True
+            else:
+                distance = np.linalg.norm(mouse_world_pos - self.last_placed_pos)
+                should_place = distance > std/2
+
+            if should_place:
+                new_gaussians = Gaussians(
+                    pos=np.append(self.gaussians.pos, [mouse_world_pos], axis=0),
+                    std=np.append(self.gaussians.std, [std]),
+                    intensity=np.append(self.gaussians.intensity, [1.0])
+                )
+                
+                # Create new buffer if needed
+                if (len(new_gaussians.pos) + 1) * 16 > self.instance_buffer.size:
+                    new_size = (len(new_gaussians.pos) + 1000) * 16  # Add extra space
+                    new_buffer = self.device.create_buffer(
+                        size=new_size,
+                        usage=wgpu.BufferUsage.VERTEX | wgpu.BufferUsage.COPY_DST
+                    )
+                    return replace(self,
+                                 gaussians=new_gaussians,
+                                 instance_buffer=new_buffer,
+                                 last_placed_pos=mouse_world_pos)
+                
+                return replace(self,
+                             gaussians=new_gaussians,
+                             last_placed_pos=mouse_world_pos)
+
+        # Update view transform
+        new_view = self.view.handle_event(scroll_offset, mouse_screen_pos, left_pressed)
         if new_view is not None:
-            # Get mouse position in world coordinates with new view
-            mouse_world_pos = new_view.screen_to_world(np.array(mouse_pos))
-            return replace(self, view=new_view, mouse_pos=mouse_world_pos)
-        
-        # Update mouse position if it changed
-        mouse_world_pos = self.view.screen_to_world(np.array(mouse_pos))
-        if self.mouse_pos is None or not np.array_equal(mouse_world_pos, self.mouse_pos):
+            return replace(self, view=new_view)
+
+        # Update mouse position
+        if mouse_world_pos is not None and not np.array_equal(mouse_world_pos, self.mouse_pos):
             return replace(self, mouse_pos=mouse_world_pos)
-        
+
         return None
 
     def render(self, canvas: WgpuCanvas) -> None:
+        start_time = time.time()
+        
         # Handle resize and update mouse position
         width, height = glfw.get_window_size(canvas._window)
         if (width, height) != (self.view.screen_rect.width, self.view.screen_rect.height):
@@ -145,7 +185,7 @@ class GameState(SceneState):
             ]
         )
             
-        # Update instance data with mouse gaussian
+        # Update instance data
         instance_data = np.zeros(len(self.gaussians.pos) + 1, dtype=np.dtype([
             ('pos', np.float32, 2),
             ('std', np.float32, 1),
@@ -160,7 +200,12 @@ class GameState(SceneState):
             instance_data['std'][-1] = 20.0
             instance_data['intensity'][-1] = 1.0
         
+        buffer_start = time.time()
         self.device.queue.write_buffer(self.instance_buffer, 0, instance_data.tobytes())
+        buffer_end = time.time()
+        
+        print(f"Buffer update took: {(buffer_end - buffer_start)*1000:.2f}ms")
+        print(f"Buffer size: {instance_data.nbytes/1024:.2f}KB")
         
         # Update view uniforms
         view_data = np.array([

@@ -79,6 +79,10 @@ class GameEngine:
             engine.scroll_offset = (x_offset, y_offset)
         
         glfw.set_scroll_callback(canvas._window, scroll_callback)
+        
+        # Disable vsync after window creation
+        glfw.swap_interval(0)
+        
         return engine
 
     def run(self, initial_scene: SceneState) -> None:

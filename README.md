@@ -35,6 +35,7 @@ nix develop
 - Mouse drag: Pan camera
 - Mouse wheel: Zoom in/out
 - Mouse cursor: Interactive gaussian component
+- Hold Shift: Add gaussian at cursor position
 
 ## Architecture
 - WebGPU for GPU-accelerated rendering

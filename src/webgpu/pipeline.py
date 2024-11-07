@@ -150,6 +150,16 @@ def create_buffers(device: wgpu.GPUDevice, gaussians: Gaussians):
         -1.0,  3.0,   0.0, -1.0,
     ], dtype=np.float32)
     
+    # Create instance data with fixed size
+    instance_data = np.zeros(len(gaussians.pos) + 1000, dtype=np.dtype([  # Add extra space
+        ('pos', np.float32, 2),
+        ('std', np.float32, 1),
+        ('intensity', np.float32, 1),
+    ]))
+    instance_data['pos'][:len(gaussians.pos)] = gaussians.pos
+    instance_data['std'][:len(gaussians.pos)] = gaussians.std
+    instance_data['intensity'][:len(gaussians.pos)] = gaussians.intensity
+    
     gaussian_vertex_buffer = device.create_buffer_with_data(
         data=gaussian_vertices,
         usage=wgpu.BufferUsage.VERTEX
@@ -159,16 +169,6 @@ def create_buffers(device: wgpu.GPUDevice, gaussians: Gaussians):
         data=fullscreen_vertices,
         usage=wgpu.BufferUsage.VERTEX
     )
-    
-    # Create instance buffer with space for mouse gaussian
-    instance_data = np.zeros(len(gaussians.pos) + 1, dtype=np.dtype([
-        ('pos', np.float32, 2),
-        ('std', np.float32, 1),
-        ('intensity', np.float32, 1),
-    ]))
-    instance_data['pos'][:len(gaussians.pos)] = gaussians.pos
-    instance_data['std'][:len(gaussians.pos)] = gaussians.std
-    instance_data['intensity'][:len(gaussians.pos)] = gaussians.intensity
     
     instance_buffer = device.create_buffer_with_data(
         data=instance_data,
