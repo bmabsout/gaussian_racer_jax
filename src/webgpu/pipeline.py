@@ -5,6 +5,7 @@ from .colormap_shader import generate_colormap_shader_code
 from ..gaussians import Gaussians
 
 def create_pipelines(device: wgpu.GPUDevice, surface_format: wgpu.TextureFormat):
+    """Create render pipelines for gaussian accumulation and colormap visualization."""
     # Create shaders
     accumulation_shader = device.create_shader_module(
         label="accumulation_shader",
@@ -43,7 +44,7 @@ def create_pipelines(device: wgpu.GPUDevice, surface_format: wgpu.TextureFormat)
         ]
     )
     
-    # Create accumulation pipeline (renders to r16float texture)
+    # Create accumulation pipeline
     accumulation_pipeline = device.create_render_pipeline(
         label="accumulation_pipeline",
         layout=device.create_pipeline_layout(
@@ -75,7 +76,7 @@ def create_pipelines(device: wgpu.GPUDevice, surface_format: wgpu.TextureFormat)
             "module": accumulation_shader,
             "entry_point": "fs_main",
             "targets": [{
-                "format": wgpu.TextureFormat.r16float,  # Single 16-bit float for height
+                "format": wgpu.TextureFormat.r16float,
                 "blend": {
                     "color": {
                         "src_factor": wgpu.BlendFactor.one,
@@ -97,7 +98,7 @@ def create_pipelines(device: wgpu.GPUDevice, surface_format: wgpu.TextureFormat)
         }
     )
     
-    # Create colormap pipeline (renders to surface format)
+    # Create colormap pipeline
     colormap_pipeline = device.create_render_pipeline(
         label="colormap_pipeline",
         layout=device.create_pipeline_layout(
@@ -131,6 +132,7 @@ def create_pipelines(device: wgpu.GPUDevice, surface_format: wgpu.TextureFormat)
     return accumulation_pipeline, colormap_pipeline, view_bind_group_layout, colormap_bind_group_layout
 
 def create_buffers(device: wgpu.GPUDevice, gaussians: Gaussians):
+    """Create vertex and instance buffers for gaussian rendering."""
     # Create vertex buffers
     gaussian_vertices = np.array([
         # First triangle
@@ -150,8 +152,9 @@ def create_buffers(device: wgpu.GPUDevice, gaussians: Gaussians):
         -1.0,  3.0,   0.0, -1.0,
     ], dtype=np.float32)
     
-    # Create instance data with fixed size
-    instance_data = np.zeros(len(gaussians.pos) + 1000, dtype=np.dtype([  # Add extra space
+    # Create instance data with large pre-allocation
+    max_instances = 2_000_000  # Pre-allocate space for 2M gaussians
+    instance_data = np.zeros(max_instances, dtype=np.dtype([
         ('pos', np.float32, 2),
         ('std', np.float32, 1),
         ('intensity', np.float32, 1),

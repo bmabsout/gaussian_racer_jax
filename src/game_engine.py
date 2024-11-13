@@ -49,7 +49,6 @@ class GameEngine:
             os.environ["XDG_SESSION_TYPE"] = "x11"
             if "WAYLAND_DISPLAY" in os.environ:
                 del os.environ["WAYLAND_DISPLAY"]
-        # macOS doesn't need special handling
         
         # Initialize GLFW
         if not glfw.init():
@@ -79,9 +78,6 @@ class GameEngine:
             engine.scroll_offset = (x_offset, y_offset)
         
         glfw.set_scroll_callback(canvas._window, scroll_callback)
-        
-        # Disable vsync after window creation
-        glfw.swap_interval(0)
         
         return engine
 
