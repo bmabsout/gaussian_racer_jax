@@ -1,6 +1,8 @@
+from dataclasses import dataclass
 from typing import NamedTuple
 import numpy as np
 
+# @dataclass(frozen=True)
 class Gaussians(NamedTuple):
     pos: np.ndarray       # shape: (n, 2)
     std: np.ndarray      # shape: (n,)
