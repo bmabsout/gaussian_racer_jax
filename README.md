@@ -2,7 +2,7 @@
 
 A WebGPU-based real-time 2D gaussian mixture renderer written in Python.
 
-[gaussians.png]()
+![](gaussians.png)
 
 ## Features
 - Real-time rendering of 2D gaussian mixtures
